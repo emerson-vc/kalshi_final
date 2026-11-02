@@ -110,7 +110,7 @@ def health(db: Database, env: str, st: RuntimeSettings) -> dict[str, Any]:
         "coverage": (run or {}).get("coverage", {}), "coverage_run": (run or {}).get("id"),
         "errors": errors, "requote_runs": requote_runs,
         "requote_enabled": st.requote_enabled, "fullscan_enabled": st.fullscan_enabled,
-        "recorder": db.meta_get(f"recorder_status:{env}", {}) or {},
+        "recorder": _recorder_status(db, env),
         "side": {"counts": counts, "mapping": current_side_mapping(db, env, st.side_check_min_quotes), "need": st.side_check_min_quotes},
         "pending_cancels": db.fetchall("SELECT * FROM pending_cancels WHERE env=:e", {"e": env}),
         "offer_upgrade": bool(db.risk_get("offer_upgrade", False)),
@@ -204,3 +204,16 @@ def chart_payload(name: str, db: Database, env: str, st: RuntimeSettings) -> dic
 
 def _pct(v: float) -> float | None:
     return None if v != v else round(100 * v, 2)  # NaN -> None
+
+
+def _recorder_status(db: Database, env: str) -> dict[str, Any]:
+    rec = dict(db.meta_get(f"recorder_status:{env}", {}) or {})
+    try:
+        from combo_edge.scheduler.launchd import is_installed
+
+        rec["installed"] = is_installed("recorder")
+    except Exception:  # noqa: BLE001
+        rec["installed"] = False
+    fresh = rec.get("updated") and timeutil.now() - float(rec["updated"]) < 60
+    rec["connected"] = bool(rec.get("connected") and fresh)
+    return rec

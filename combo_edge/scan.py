@@ -92,10 +92,10 @@ class ScanResult:
 class ScanHooks:
     """Extension points filled in by later phases (exploration, fair model, maker model, execution)."""
 
-    extra_candidates: Callable[[Universe, RuntimeSettings], list[Candidate]] | None = None
+    extra_candidates: Callable[[Universe, RuntimeSettings, Database, set[str]], list[Candidate]] | None = None
     fair_model_factory: Callable[[Universe], Any] | None = None
     maker_model_factory: Callable[[Database], Any] | None = None
-    explore_picker_factory: Callable[[Database, RuntimeSettings], Callable[[list[Candidate], int, int], list[Candidate]]] | None = None
+    explore_picker_factory: Callable[[Database, str, RuntimeSettings], Callable[[list[Candidate], int, int], list[Candidate]]] | None = None
     execution_factory: Callable[..., Any] | None = None
     after_probes: list[Callable[..., Awaitable[None] | None]] = field(default_factory=list)
 
@@ -268,9 +268,14 @@ async def run_scan(
         blocked = resolver.rejections.blocked_classes()
         cands = generate_candidates(uni, req.families, blocked)
         if hooks.extra_candidates:
-            extra = hooks.extra_candidates(uni, st)
+            extra = hooks.extra_candidates(uni, st, db, blocked)
             seen = {c.signature for c in cands}
-            cands += [c for c in extra if c.signature not in seen]
+            for c in extra:
+                if c.signature not in seen:
+                    seen.add(c.signature)
+                    cands.append(c)
+                    uni.coverage.candidates_by_family[c.family.split(":", 1)[0]] += 1
+                    uni.coverage.candidates_by_game[c.game_code] += 1
         progress.counters["candidates"] = len(cands)
         progress.note(f"{len(cands)} candidates from {len(set(c.family for c in cands))} families")
 
@@ -286,7 +291,7 @@ async def run_scan(
         progress.phase = "select"
         known = set(resolver.index.lookup_many([c.signature for c in cands]))
         explore, exploit, free = st.explore_split()
-        picker = hooks.explore_picker_factory(db, st) if hooks.explore_picker_factory else None
+        picker = hooks.explore_picker_factory(db, env, st) if hooks.explore_picker_factory else None
         # A dry run creates nothing, so it plans against the full run budget.
         creation_budget = budget if req.dry_run else resolver.budget_left()
         sel = select(cands, rfq_budget=budget, creation_budget=creation_budget, known=known,
