@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>combo-edge · {{ tab|title }}</title>
+  <link rel="stylesheet" href="/static/app.css">
+  <script src="/static/vendor/htmx.min.js"></script>
+  <script src="/static/vendor/chart.umd.min.js"></script>
+  <script src="/static/app.js" defer></script>
+</head>
+<body>
+<div class="topbar">
+  <div class="brand">combo-edge <span>NFL</span></div>
+  <nav class="tabs">
+    <a href="/" class="{{ 'on' if tab == 'scan' }}">Scan</a>
+    <a href="/bets" class="{{ 'on' if tab == 'bets' }}">My bets</a>
+    <a href="/learning" class="{{ 'on' if tab == 'learning' }}">Learning</a>
+    <a href="/health" class="{{ 'on' if tab == 'health' }}">Health</a>
+  </nav>
+  <div class="spacer"></div>
+  {% set used = h.creations.conservative %}
+  <span class="creations" title="Combo creations in the last 7 days (every POST counted, conservative) vs Kalshi's 5,000/week cap">
+    creations {{ used }}/{{ h.cap }} · {{ h.creations.likely_new }} new</span>
+  <form method="post" action="/env" style="display:flex;gap:6px;align-items:center" onsubmit="return ceEnvSwitch(this)">
+    <select name="env" aria-label="Environment">
+      {% for e in envs %}<option value="{{ e }}" {{ 'selected' if e == h.env }}>{{ e|upper }}</option>{% endfor %}
+    </select>
+    <input type="hidden" name="confirm" value="">
+  </form>
+  <span class="badge env-{{ h.env }}">{{ h.env|upper }}</span>
+  <span class="badge mode-{{ h.mode }}" title="Execution mode">{% if h.mode == 'live' %}● LIVE{% else %}{{ h.mode|upper }}{% endif %}</span>
+  <form method="post" action="/kill" onsubmit="return confirm('KILL SWITCH: turn execution off, stop the scan, cancel every open RFQ this tool created and pause the schedulers?')">
+    <button class="killbtn" type="submit" title="Stops everything immediately">KILL</button>
+  </form>
+</div>
+<main>
+  {% if h.killed %}<div class="banner critical">Kill switch is ON. Nothing will be bought and scans are blocked. Clear it on the Health tab.</div>{% endif %}
+  {% if h.trip_reason and not h.killed %}<div class="banner warning">Execution was turned OFF: {{ h.trip_reason }}. Reset it on the My bets tab.</div>{% endif %}
+  {% for level, text in flash %}<div class="flash {{ level }}">{{ text }}</div>{% endfor %}
+  {% block content %}{% endblock %}
+</main>
+</body>
+</html>

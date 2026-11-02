@@ -1,0 +1,78 @@
+{% extends "base.html" %}
+{% block content %}
+{% set used = hl.creations.conservative %}{% set frac = used / hl.cap if hl.cap else 0 %}
+<div class="grid g4">
+  <div class="card tile"><div class="label">Combo creations · 7 days</div><div class="value">{{ used }} / {{ hl.cap }}</div>
+    <div class="sub">{{ hl.creations.likely_new }} likely new · {{ hl.creations.resolved }} resolved · {{ hl.creations.rejected }} rejected · reserve {{ hl.reserve }}</div>
+    <div class="meter {{ 'crit' if frac > 0.9 else 'warn' if frac > 0.7 }}"><i style="width: {{ (100 * frac)|round(1) }}%"></i></div></div>
+  <div class="card tile"><div class="label">Rate-limit tier</div><div class="value">{{ (hl.limits.tier or 'unknown')|title }}</div>
+    <div class="sub">{% if hl.limits.body %}read {{ hl.limits.body.read.refill_rate if hl.limits.body.read else '?' }}/s · write {{ hl.limits.body.write.refill_rate if hl.limits.body.write else '?' }}/s{% else %}not read yet{% endif %} · {{ hl.n429 }} × 429 this week</div>
+    {% if hl.offer_upgrade %}<form method="post" action="/upgrade-tier" style="margin-top:8px"><button class="good" type="submit">Upgrade to Advanced</button></form>{% endif %}</div>
+  <div class="card tile"><div class="label">Quote fill rate · 7 days</div><div class="value">{{ '—' if hl.fill.rate is none else '%.0f%%'|format(100 * hl.fill.rate) }}</div>
+    <div class="sub">{{ hl.fill.quoted }} of {{ hl.fill.sent }} probes · {{ hl.fill.ws_fallbacks }} REST fallbacks</div></div>
+  <div class="card tile"><div class="label">Time to first quote</div><div class="value">{{ '—' if hl.fill.ttfq_median is none else '%.2fs'|format(hl.fill.ttfq_median / 1000) }}</div>
+    <div class="sub">median, quoted probes</div></div>
+</div>
+
+<div class="grid g2 section">
+  <div class="card"><header><h2>Time to first quote</h2><small>quoted probes, last 7 days</small></header>
+    <div class="chart" data-chart="count" data-label="RFQs" data-ytitle="RFQs" data-src="/api/chart/ttfq"></div>
+    <p class="muted">Outcomes: {% for k, v in hl.fill.outcomes.items() %}<span class="chip">{{ k }} {{ v }}</span>{% endfor %}</p></div>
+  <div class="card"><header><h2>Quote side mapping</h2><small>which field holds the buy-YES contract count</small></header>
+    <p>{% if hl.side.mapping %}<span class="status good">verified: {{ hl.side.mapping }}</span> → buying YES sends <b>accepted_side: "{{ 'no' if hl.side.mapping == 'quote_side' else 'yes' }}"</b>
+      {% else %}<span class="status warning">not verified</span> (needs {{ hl.side.need }} consistent quotes on this env; live stays locked){% endif %}</p>
+    <p class="muted">Counts: {% for k, v in hl.side.counts.items() %}<span class="chip">{{ k }} {{ v }}</span>{% else %}none yet{% endfor %}</p>
+    {% if hl.pending_cancels %}<div class="flash error">{{ hl.pending_cancels|length }} RFQ cancels pending (retried every run).</div>{% endif %}
+  </div>
+</div>
+
+<div class="grid g3 section">
+  <div class="card"><header><h2>Auto re-quote panel</h2><span class="status {{ 'good' if hl.requote_enabled else '' }}">{{ 'ON' if hl.requote_enabled else 'OFF' }}</span></header>
+    <p class="muted">launchd re-RFQs the fixed panel at 6d/4d/3d/2d/1d/12h/6h/1h before kickoff. Never creates combos, never bets.</p>
+    <form method="post" action="/toggle/requote"><input type="hidden" name="on" value="{{ '0' if hl.requote_enabled else '1' }}"><button class="secondary" type="submit">Turn {{ 'off' if hl.requote_enabled else 'on' }}</button></form>
+    {% if hl.requote_runs %}<div class="tablewrap" style="margin-top:10px;max-height:200px"><table><tbody>{% for r in hl.requote_runs %}
+      <tr><td>{{ r.started_at|when_short }}</td><td>{{ r.status }}</td><td class="num">{{ r.summary.probed or 0 }} RFQs</td></tr>{% endfor %}</tbody></table></div>{% endif %}</div>
+  <div class="card"><header><h2>RFQ-feed recorder</h2><span class="status {{ 'good' if hl.recorder.connected else '' }}">{{ 'connected' if hl.recorder.connected else 'not running' }}</span></header>
+    <p class="muted">24/7 read-only listener: 2-leg NFL same-game RFQs (free combos) + demand counters.
+      {% if hl.recorder.last_msg_ts %}Last message {{ hl.recorder.last_msg_ts|when_short }} · {{ hl.recorder.rows_today or 0 }} rows today.{% endif %}</p>
+    <form method="post" action="/toggle/recorder"><input type="hidden" name="on" value="{{ '0' if hl.recorder.installed else '1' }}"><button class="secondary" type="submit">{{ 'Uninstall' if hl.recorder.installed else 'Install' }} launchd agent</button></form></div>
+  <div class="card"><header><h2>Full-scan scheduler</h2><span class="status {{ 'good' if hl.fullscan_enabled else '' }}">{{ 'ON' if hl.fullscan_enabled else 'OFF' }}</span></header>
+    <p class="muted">Optional heavy sweep when new prop markets open. Off by default.</p>
+    <form method="post" action="/toggle/fullscan"><input type="hidden" name="on" value="{{ '0' if hl.fullscan_enabled else '1' }}"><button class="secondary" type="submit">Turn {{ 'off' if hl.fullscan_enabled else 'on' }}</button></form></div>
+</div>
+
+<div class="card section" id="coverage">
+  <header><h2>Coverage report</h2><small>run #{{ hl.coverage_run or '—' }} · collection {{ hl.coverage.collection or '—' }}</small></header>
+  {% set cov = hl.coverage %}
+  {% if not cov %}<div class="empty">No run yet.</div>{% else %}
+  {% for e in cov.errors %}<div class="banner critical">{{ e }}</div>{% endfor %}
+  {% for w in cov.warnings %}<div class="flash warn">{{ w }}</div>{% endfor %}
+  <div class="grid g2">
+    <div><h3>Legs per game, by stat</h3><div class="tablewrap" style="max-height:300px"><table><tbody>
+      {% for g in cov.games %}<tr><td>{{ g.game_code }}<br><small>{{ g.title }}</small></td><td><small>{% for k, v in (cov.legs_by_game_kind.get(g.game_code) or {}).items()|sort %}{{ k }} {{ v }} · {% endfor %}</small></td></tr>{% endfor %}
+    </tbody></table></div></div>
+    <div><h3>Candidates per family</h3><div class="tablewrap" style="max-height:300px"><table><tbody>
+      {% for k, v in cov.candidates_by_family.items()|sort %}<tr><td>{{ k }}</td><td class="num">{{ v }}</td></tr>{% endfor %}</tbody></table></div>
+      <h3 style="margin-top:10px">Combos</h3><p>{% for k, v in cov.combos.items() %}<span class="chip">{{ k }} {{ v }}</span>{% endfor %}</p>
+      <h3>Skipped</h3><p>{% for k, v in cov.skipped.items() %}<span class="chip">{{ k }} {{ v }}</span>{% else %}none{% endfor %}</p>
+      <h3>Leg probability sources</h3><p>{% for k, v in (cov.p_sources or {}).items() %}<span class="chip">{{ k }} {{ v }}</span>{% endfor %}</p></div>
+  </div>
+  <h3 style="margin-top:12px">Unparsed legs</h3>
+  {% if not cov.unparsed %}<p class="muted">None: every combo-eligible market was classified.</p>{% else %}
+  <div class="tablewrap"><table><thead><tr><th>Series</th><th class="num">Count</th><th>Examples</th></tr></thead><tbody>
+  {% for s, e in cov.unparsed.items() %}<tr><td>{{ s }}</td><td class="num">{{ e.count }}</td><td><small>{% for x in e.examples %}{{ x.ticker }} ({{ x.reason }})<br>{% endfor %}</small></td></tr>{% endfor %}
+  </tbody></table></div>{% endif %}
+  <h3 style="margin-top:12px">Excluded by config</h3><p>{% for k, v in cov.excluded.items() %}<span class="chip">{{ k }} {{ v }}</span>{% endfor %}</p>
+  {% endif %}
+</div>
+
+<div class="grid g2 section">
+  <div class="card"><header><h2>HTTP by endpoint · 7 days</h2></header>
+    {% if not hl.http %}<div class="empty">No requests logged.</div>{% else %}<div class="tablewrap" style="max-height:280px"><table><tbody>
+    {% for r in hl.http %}<tr><td><small>{{ r.endpoint }}</small></td><td class="num">{{ r.status }}</td><td class="num">{{ r.n }}</td></tr>{% endfor %}</tbody></table></div>{% endif %}</div>
+  <div class="card"><header><h2>Last errors</h2>
+    {% if h.killed %}<form method="post" action="/kill/clear"><button class="secondary" type="submit">Clear kill switch</button></form>{% endif %}</header>
+    {% if not hl.errors %}<div class="empty">No errors.</div>{% else %}<div class="tablewrap" style="max-height:280px"><table><tbody>
+    {% for e in hl.errors %}<tr><td>{{ e.ts|when_short }}</td><td>{{ e['where'] }}</td><td><small>{{ e.message }}</small></td></tr>{% endfor %}</tbody></table></div>{% endif %}</div>
+</div>
+{% endblock %}

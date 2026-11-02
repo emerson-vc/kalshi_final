@@ -1,0 +1,88 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="grid g2">
+  <div class="card">
+    <header><h2>Execution</h2><span class="badge mode-{{ b.mode }}">{{ b.mode|upper }}</span></header>
+    <p class="muted" style="margin:0 0 10px">Paper records exactly what it would have bought at the real quote. Live accepts quotes that pass every gate:
+      EV ≥ {{ '%.0f%%'|format(100 * st.ev_min) }} after fees, stratum ≥ {{ st.stratum_min_quotes }} quotes and +EV at the lower bound, fresh quote,
+      ¼-Kelly stake within {{ st.cap_combo|money }}/combo · {{ st.cap_game|money }}/game · {{ st.cap_player|money }}/player, no duplicates,
+      loss limits {{ st.daily_loss_limit|money }}/day · {{ st.weekly_loss_limit|money }}/week · {{ st.max_bets_per_day }} bets/day.</p>
+    <div class="fields">
+      <form method="post" action="/execution/mode"><input type="hidden" name="mode" value="off"><button class="secondary" type="submit">Off</button></form>
+      <form method="post" action="/execution/mode"><input type="hidden" name="mode" value="paper"><button class="secondary" type="submit">Paper</button></form>
+      <form method="post" action="/execution/mode" onsubmit="return this.confirmation.value.length > 0">
+        <input type="hidden" name="mode" value="live">
+        <label class="f">Type <b>{{ b.phrase }}</b> to go live<input name="confirmation" autocomplete="off" placeholder="{{ b.phrase }}" {{ 'disabled' if h.live_forbidden }}></label>
+        <button class="danger" type="submit" {{ 'disabled' if h.live_forbidden }}>Go live</button>
+      </form>
+    </div>
+    <p class="muted" style="margin:10px 0 0">
+      {% if h.live_forbidden %}Live is disabled on this machine (COMBO_EDGE_FORBID_LIVE).{% endif %}
+      First live trade is a $1 canary verified by its fill: {% if b.canary_passed %}<span class="status good">canary passed</span>{% else %}<span class="status warning">not yet</span>{% endif %}
+    </p>
+  </div>
+  <div class="card">
+    <header><h2>Bankroll &amp; caps</h2></header>
+    <form method="post" action="/settings" class="fields">
+      <input type="hidden" name="back" value="/bets">
+      <label class="f">Bankroll<input type="number" name="bankroll" step="50" value="{{ st.bankroll }}"></label>
+      <label class="f">Kelly fraction<input type="number" name="kelly_fraction" step="0.05" value="{{ st.kelly_fraction }}"></label>
+      <label class="f">$/combo<input type="number" name="cap_combo" step="1" value="{{ st.cap_combo }}"></label>
+      <label class="f">$/game<input type="number" name="cap_game" step="1" value="{{ st.cap_game }}"></label>
+      <label class="f">$/player<input type="number" name="cap_player" step="1" value="{{ st.cap_player }}"></label>
+      <label class="f">Min EV<input type="number" name="ev_min" step="0.01" value="{{ st.ev_min }}"></label>
+      <label class="f">Daily loss<input type="number" name="daily_loss_limit" step="5" value="{{ st.daily_loss_limit }}"></label>
+      <label class="f">Weekly loss<input type="number" name="weekly_loss_limit" step="5" value="{{ st.weekly_loss_limit }}"></label>
+      <label class="f">Bets/day<input type="number" name="max_bets_per_day" step="1" value="{{ st.max_bets_per_day }}"></label>
+      <button class="secondary" type="submit">Save</button>
+    </form>
+  </div>
+</div>
+
+<div class="card section">
+  <header><h2>My open combo positions <small>from Kalshi ({{ h.env|upper }})</small></h2>
+    <form method="post" action="/bets/recheck"><button class="secondary" type="submit">Re-check my combos</button></form></header>
+  {% if recheck %}<p class="muted">Last re-check: {{ recheck.probed }} combos re-quoted, {{ recheck.quoted }} quoted.</p>{% endif %}
+  {% if not b.positions %}<div class="empty">No open combo positions (or not synced yet: press Re-check).</div>{% else %}
+  <div class="tablewrap"><table><thead><tr><th>Combo</th><th class="num">Contracts</th><th class="num">Paid</th><th class="num">Latest re-quote</th><th class="num" title="latest price / paid − 1">CLV</th><th class="num">Cost</th></tr></thead><tbody>
+  {% for p in b.positions %}<tr><td>{% for l in p.legs %}<div>{{ l[0] }} <small>{{ l[1] }}</small></div>{% else %}{{ p.ticker }}{% endfor %}</td>
+    <td class="num">{{ '%.0f'|format(p.contracts) }}</td><td class="num">{{ '—' if p.price_paid is none else '%.3f'|format(p.price_paid) }}</td>
+    <td class="num">{{ '—' if p.latest_price is none else '%.3f'|format(p.latest_price) }}<br><small>{{ p.latest_at|when_short if p.latest_at else '' }}</small></td>
+    <td class="num {{ 'pos' if (p.clv or 0) > 0 else 'neg' }}">{{ p.clv|pct }}</td><td class="num">{{ p.cost|money }}</td></tr>{% endfor %}
+  </tbody></table></div>{% endif %}
+</div>
+
+<div class="grid g2 section">
+  {% for label, ex in [('Live exposure', b.live_exposure), ('Paper exposure', b.paper_exposure)] %}
+  <div class="card"><header><h2>{{ label }}</h2></header>
+    {% for w in ex.stacking %}<div class="flash warn">Stacking: {{ w }}</div>{% endfor %}
+    {% if not ex.games and not ex.players %}<div class="empty">No open exposure.</div>{% endif %}
+    {% for g in ex.games %}<div style="margin-bottom:8px"><div style="display:flex;justify-content:space-between"><span>{{ g.name }}</span><span class="num">{{ g.amt|money }} / {{ g.cap|money }}</span></div>
+      <div class="meter {{ 'crit' if g.amt >= g.cap else 'warn' if g.warn }}"><i style="width: {{ [100, 100 * g.amt / g.cap]|min }}%"></i></div></div>{% endfor %}
+    {% for p in ex.players %}<div style="margin-bottom:8px"><div style="display:flex;justify-content:space-between"><span>{{ p.name }} <small>{{ p.n }} combos</small></span><span class="num">{{ p.amt|money }} / {{ p.cap|money }}</span></div>
+      <div class="meter {{ 'crit' if p.amt >= p.cap else 'warn' if p.warn }}"><i style="width: {{ [100, 100 * p.amt / p.cap]|min }}%"></i></div></div>{% endfor %}
+  </div>{% endfor %}
+</div>
+
+<div class="grid g2 section">
+  {% for bk in [b.paper, b.live] %}
+  <div class="card tile"><div class="label">{{ bk.book }} book</div>
+    <div class="value {{ 'pos' if bk.pnl > 0 }}">{{ bk.pnl|money }}</div>
+    <div class="sub">{{ bk.n }} bets · {{ bk.open|length }} open · ROI {{ bk.roi|pct }} · mean CLV {{ bk.clv_mean|pct }}</div></div>
+  {% endfor %}
+  <div class="card"><header><h2>Settled P&amp;L over time</h2><small>cumulative, by bet</small></header>
+    <div class="chart" data-chart="lines" data-src="/api/chart/pnl" data-unit="" data-ytitle="cumulative P&L, $"></div></div>
+  <div class="card"><header><h2>CLV over time</h2><small>% vs last pre-kickoff re-quote</small></header>
+    <div class="chart" data-chart="lines" data-src="/api/chart/clv" data-unit="%" data-ytitle="CLV, %"></div></div>
+</div>
+
+<div class="card section">
+  <header><h2>Execution decisions</h2><small>every accept, paper fill, reject and re-shop, with its reason</small></header>
+  {% if not b.decisions %}<div class="empty">No decisions yet.</div>{% else %}
+  <div class="tablewrap"><table><thead><tr><th>When</th><th>Mode</th><th>Decision</th><th class="num">EV</th><th class="num">Stake</th><th>Reason</th></tr></thead><tbody>
+  {% for d in b.decisions %}<tr><td>{{ d.ts|when_short }}</td><td>{{ d.mode }}</td>
+    <td><span class="chip {{ 'good' if d.decision in ('accept','paper_fill','canary') else 'crit' if d.decision in ('abort',) else '' }}">{{ d.decision }}</span></td>
+    <td class="num">{{ d.ev|pct }}</td><td class="num">{{ d.stake|money }}</td><td><small>{{ d.reason }}</small></td></tr>{% endfor %}
+  </tbody></table></div>{% endif %}
+</div>
+{% endblock %}

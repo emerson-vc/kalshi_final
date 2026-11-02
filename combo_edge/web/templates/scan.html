@@ -1,0 +1,29 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="card">
+  <div class="runpanel">
+    <form method="post" action="/scan/run" id="runform">
+      <button class="runbtn" type="submit" {{ 'disabled' if busy or h.killed }}>{{ 'Scanning…' if busy else 'Run scan' }}</button>
+    </form>
+    <div>
+      <div class="fields">
+        <label class="f">Stake per RFQ ($, fee-incl.)<input form="runform" type="number" name="stake" step="0.5" min="0.5" max="10" value="{{ st.stake }}"></label>
+        <label class="f">RFQ budget<input form="runform" type="number" name="rfq_budget" min="1" max="5000" value="{{ st.rfq_budget }}"></label>
+        <label class="f">Quote window (s)<input form="runform" type="number" name="quote_window_s" step="0.5" min="1" max="30" value="{{ st.quote_window_s }}"></label>
+        <label class="f" title="Plan only: universe, candidates and prescore. No combos created, no RFQs."><span>Dry run</span>
+          <input form="runform" type="checkbox" name="dry_run" value="1"></label>
+        {% if busy %}<form method="post" action="/scan/stop"><button class="runbtn stop" type="submit">Stop &amp; cancel RFQs</button></form>{% endif %}
+        <div class="spacer"></div>
+        <small>New combos this run: up to {{ st.max_new_creations_per_run }} · week: {{ h.creations.conservative }}/{{ h.cap }} used (reserve {{ h.reserve }} for your app)</small>
+      </div>
+      <div id="progress" hx-get="/partials/progress" hx-trigger="{{ 'every 1s' if busy else 'none' }}" hx-swap="innerHTML">
+        {% include "partials/progress.html" %}
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="section" id="results">
+  {% include "partials/results.html" %}
+</div>
+{% endblock %}

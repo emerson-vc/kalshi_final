@@ -1,0 +1,22 @@
+{% set c = progress.counters %}
+{% set pct = (100 * c.probes_done / c.probes_total) if c.probes_total else (8 if progress.running else 0) %}
+<div class="progress" {% if final and progress.finished_at %}hx-get="/partials/results" hx-trigger="load" hx-target="#results"{% endif %}>
+  <div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:6px">
+    <span class="status {{ 'warning' if progress.running else ('critical' if progress.error else 'good' if progress.finished_at else '') }}">
+      {% if progress.running %}{{ progress.phase }}…{% elif progress.error %}failed: {{ progress.error }}{% elif progress.finished_at %}last run {{ progress.status }}{% else %}idle{% endif %}
+    </span>
+    {% if c.probes_total %}<small>{{ c.probes_done }}/{{ c.probes_total }} probes</small>{% endif %}
+  </div>
+  <div class="bar"><i style="width: {{ pct|round(1) }}%"></i></div>
+  <div class="counters">
+    <div class="counter"><b>{{ c.legs_found }}</b><span>legs</span></div>
+    <div class="counter"><b>{{ c.candidates }}</b><span>candidates</span></div>
+    <div class="counter"><b>{{ c.selected }}</b><span>selected</span></div>
+    <div class="counter"><b>{{ c.lookups }}</b><span>existing combos</span></div>
+    <div class="counter"><b>{{ c.creations }}</b><span>creations</span></div>
+    <div class="counter"><b>{{ c.rfqs_sent }}</b><span>RFQs sent</span></div>
+    <div class="counter"><b>{{ c.quotes_received }}</b><span>quotes</span></div>
+    <div class="counter"><b>{{ c.executions }}</b><span>executions</span></div>
+  </div>
+  {% if progress.messages %}<div class="log">{% for m in progress.messages[-8:]|reverse %}<div>{{ m }}</div>{% endfor %}</div>{% endif %}
+</div>

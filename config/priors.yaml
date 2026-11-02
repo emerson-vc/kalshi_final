@@ -1,0 +1,60 @@
+# Phase-1 prescore priors. Edit freely; the dashboard re-reads this file on every Run.
+#
+#   fair_joint = P(legA) * P(legB | legA)
+#
+# P(leg) comes from the Kalshi mid (falling back to the ask), or from the blended fair once the
+# Phase-2 model is available. The joint comes from a TAIL-DEPENDENT copula fitted per family so it
+# reproduces the anchors below. Never Gaussian: a Gaussian copula has no tail dependence, which is
+# the makers' apparent mistake, so it would hide exactly the edge we're looking for.
+#
+# Anchors are rough priors from your hand-found combos, until the Phase-2 simulator replaces them:
+#   p_cond   = P(conditioning leg), p_target = P(other leg), cond = P(target | conditioning leg)
+# The marginals are the fee-inclusive prices implied by your fixture payouts.
+#
+# copula: t (default, df=4, symmetric tails, also covers "No + No"), gumbel or clayton
+# (both put the dependence on the joint-YES tail).
+
+defaults:
+  copula: t
+  df: 4
+  rho: 0.35            # used by families without anchors
+  expected_ratio: 1.0  # makers quote ~ the product of the leg payouts (your finds cluster near 1.0)
+  max_expected_payout: 200      # prior cap: makers rarely sell penny-on-penny combos at 1c x 1c
+  uncertainty_per_unquoted_leg: 0.20  # extra band for a leg priced from its ladder, not a two-sided mid
+  uncertainty_per_efold_from_anchor: 0.12  # anchors are only trustworthy near their own marginals
+  uncertainty_anchored: 0.15    # fair_lower = fair * (1 - u), feeds the execution confidence gate
+  uncertainty_unanchored: 0.30
+  # Default copula strength for exploration pairs outside any family, by relation:
+  relation_rho: {same_player: 0.50, same_team: 0.30, opponent: 0.10, game: 0.25}
+
+families:
+  qb_ptd_x_team_total:
+    expected_ratio: 0.68   # your three finds: ratios 1.01, 0.52, 0.51; the maker model replaces this
+    # P(team over | QB 4+ pass TD) ~ 0.88  (Stafford/LAR o28.5, Stroud/HOU o24.5, Darnold/SEA o28.5)
+    anchors:
+      - {p_cond: 0.17, p_target: 0.54, cond: 0.88}
+      - {p_cond: 0.07, p_target: 0.29, cond: 0.88}
+      - {p_cond: 0.06, p_target: 0.22, cond: 0.88}
+  wr_td_x_team_total:
+    expected_ratio: 1.10   # Lamb 3+ TD / DAL o28.5: ratio 1.10; the maker model replaces this
+    # P(team over | WR 3+ TD) ~ 0.92  (Lamb 3+ TD / DAL o28.5)
+    anchors:
+      - {p_cond: 0.04, p_target: 0.51, cond: 0.92}
+  qb_pyds_x_rec_yds:
+    expected_ratio: 0.85   # Stafford 275+ / Nacua 190+: ratio 0.85; the maker model replaces this
+    # P(QB 275+ pass yds | WR 160+ rec yds) ~ 0.85, | WR 190+ ~ 0.92  (Stafford 275+ / Nacua 190+)
+    anchors:
+      - {p_cond: 0.10, p_target: 0.56, cond: 0.85}
+      - {p_cond: 0.05, p_target: 0.56, cond: 0.92}
+  ml_x_h1_spread:
+    # P(team ML | team leads 1H by 11+) ~ 0.85
+    anchors:
+      - {p_cond: 0.19, p_target: 0.55, cond: 0.85}
+  qb_ptd_x_team_ml:
+    rho: 0.45
+  qb_ptd_x_rec_td:
+    rho: 0.45
+  qb_x_game_total:
+    rho: 0.60
+  rb_x_ml_spread:
+    rho: 0.40

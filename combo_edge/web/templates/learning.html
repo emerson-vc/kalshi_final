@@ -1,0 +1,65 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="grid g4">
+  <div class="card tile"><div class="label">Quote labels</div><div class="value">{{ l.n_labels }}</div><div class="sub">edge = fair × quoted payout − 1</div></div>
+  <div class="card tile"><div class="label">Strata at target</div><div class="value">{{ l.reached }}/{{ l.n_strata }}</div>
+    <div class="sub">≥ {{ l.target }} quotes per leg-type pair × relation</div>
+    <div class="meter"><i style="width: {{ (100 * l.reached / l.n_strata) if l.n_strata else 0 }}%"></i></div></div>
+  <div class="card tile"><div class="label">Budget mode</div><div class="value">{{ 'Explore' if l.exploration_mode else 'Exploit' }}</div>
+    <div class="sub">{{ '70% explore · 15% exploit · 15% free combos' if l.exploration_mode else '85% exploit · 15% explore' }}</div></div>
+  <div class="card tile"><div class="label">When to press Run</div>
+    <div class="value" style="font-size:18px">{{ l.recommendation.headline if l.recommendation else 'Not enough data' }}</div>
+    <div class="sub">{{ l.recommendation.detail if l.recommendation else 'Needs quotes across several days and hours-to-kickoff buckets' }}</div></div>
+</div>
+
+<div class="grid g2 section">
+  <div class="card"><header><h2>Edge vs hours to kickoff</h2><small>mean with 95% CI</small></header>
+    <div class="chart" data-chart="edge" data-src="/api/chart/hours"></div></div>
+  <div class="card"><header><h2>Edge vs leg liquidity</h2><small>worst leg's bid–ask spread at probe time</small></header>
+    <div class="chart" data-chart="edge" data-src="/api/chart/liq"></div></div>
+  <div class="card"><header><h2>Edge by template family</h2></header>
+    <div class="chart" data-chart="edge" data-src="/api/chart/family"></div></div>
+  <div class="card"><header><h2>Edge by day of week</h2><small>when the probe ran</small></header>
+    <div class="chart" data-chart="edge" data-src="/api/chart/dow"></div></div>
+</div>
+
+<div class="grid g2 section">
+  <div class="card"><header><h2>Exploration progress</h2><small>quotes per stratum (top 30)</small></header>
+    <div class="chart tall" data-chart="count" data-horizontal="1" data-label="quotes" data-src="/api/chart/strata"></div>
+    {% if l.exploration_mode %}<form method="post" action="/exploration/finish" style="margin-top:10px" onsubmit="return confirm('Write the exploration report and switch to 85% exploit / 15% explore?')">
+      <button class="secondary" type="submit">Finish exploration &amp; write report</button></form>{% endif %}
+  </div>
+  <div class="card"><header><h2>Still under-sampled</h2><small>fewest quotes first</small></header>
+    {% if not l.under %}<div class="empty">{{ 'Every stratum has reached the target.' if l.n_strata else 'No quotes yet.' }}</div>{% else %}
+    <div class="tablewrap" style="max-height:320px"><table><thead><tr><th>Stratum</th><th class="num">Quotes</th></tr></thead><tbody>
+    {% for s, n in l.under %}<tr><td><small>{{ s }}</small></td><td class="num">{{ n }}/{{ l.target }}</td></tr>{% endfor %}</tbody></table></div>{% endif %}
+  </div>
+</div>
+
+<div class="card section">
+  <header><h2>What the model learned</h2><small>top strata by mean edge (clipped at +300%) with 95% CI</small></header>
+  {% if not l.top_strata %}<div class="empty">No quotes yet.</div>{% else %}
+  <div class="tablewrap"><table><thead><tr><th>Stratum</th><th class="num">Mean edge</th><th class="num">95% CI</th><th class="num">n</th></tr></thead><tbody>
+  {% for s in l.top_strata %}<tr><td>{{ s.group }}</td><td class="num {{ 'pos' if s.mean > 0 }}">{{ s.mean|pct }}</td>
+    <td class="num">{% if s.lo == s.lo %}{{ s.lo|pct }} … {{ s.hi|pct }}{% else %}—{% endif %}</td><td class="num">{{ s.n }}</td></tr>{% endfor %}
+  </tbody></table></div>{% endif %}
+</div>
+
+<div class="grid g2 section">
+  <div class="card"><header><h2>Maker model</h2><small>accuracy and drift</small></header>
+    {% if not l.models %}<div class="empty">Not trained yet (needs logged quotes).</div>{% else %}
+    <div class="tablewrap"><table><thead><tr><th>Kind</th><th>Trained</th><th class="num">n</th><th>Metrics</th></tr></thead><tbody>
+    {% for m in l.models[:8] %}<tr><td>{{ m.kind }}</td><td>{{ m.created_at|when_short }}</td><td class="num">{{ m.n_train }}</td>
+      <td><small>{% for k, v in m.metrics.items() %}{{ k }}={{ '%.3f'|format(v) if v is number else v }} {% endfor %}</small></td></tr>{% endfor %}</tbody></table></div>{% endif %}
+    {% if l.drift %}<p class="muted">Drift: {{ l.drift.summary }}</p>{% endif %}
+  </div>
+  <div class="card"><header><h2>Newly promoted template families</h2></header>
+    {% if not l.promotions %}<div class="empty">None yet. An explored pair type is promoted when P(edge &gt; 5%) &gt; 0.9 over ≥30 quotes and ≥3 games.</div>{% else %}
+    <div class="tablewrap"><table><thead><tr><th>When</th><th>Family</th><th>Evidence</th></tr></thead><tbody>
+    {% for p in l.promotions %}<tr><td>{{ p.ts|when_short }}</td><td>{{ p.family_key }}</td><td><small>n={{ p.evidence.n }} games={{ p.evidence.games }} mean={{ p.evidence.mean|pct }} P={{ '%.2f'|format(p.evidence.prob or 0) }}</small></td></tr>{% endfor %}
+    </tbody></table></div>{% endif %}
+    {% if l.calibration %}<h3 style="margin-top:12px">Truth-model calibration</h3><pre>{{ l.calibration.text }}</pre>{% endif %}
+  </div>
+</div>
+{% if l.report %}<div class="card section"><header><h2>Exploration report</h2><small>{{ l.report.path }}</small></header><pre>{{ l.report.text }}</pre></div>{% endif %}
+{% endblock %}

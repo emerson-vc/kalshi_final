@@ -1,0 +1,66 @@
+{% set s = summary %}
+{% if s %}
+<div class="grid g4">
+  <div class="card tile"><div class="label">Quote fill rate</div>
+    <div class="value">{{ '—' if s.fill_rate is none else '%.0f%%'|format(100 * s.fill_rate) }}</div>
+    <div class="sub">{{ s.quoted or 0 }} of {{ s.rfqs or 0 }} RFQs got a quote{% if s.dry_run %} · dry run{% endif %}</div></div>
+  <div class="card tile"><div class="label">Time to first quote</div>
+    <div class="value">{{ '—' if s.ttfq is none else '%.2fs'|format(s.ttfq / 1000) }}</div><div class="sub">median · makers per quoted RFQ {{ '—' if s.makers is none else '%.1f'|format(s.makers) }}</div></div>
+  <div class="card tile"><div class="label">Creations this run</div>
+    <div class="value">{{ s.creations or 0 }}</div>
+    {% set used = h.creations.conservative %}{% set frac = used / h.cap if h.cap else 0 %}
+    <div class="sub">{{ used }}/{{ h.cap }} this week</div><div class="meter {{ 'crit' if frac > 0.9 else 'warn' if frac > 0.7 }}"><i style="width: {{ (100 * frac)|round(1) }}%"></i></div></div>
+  <div class="card tile"><div class="label">Coverage</div>
+    <div class="value">{% if s.coverage_ok %}<span class="status good">OK</span>{% else %}<span class="status critical">ERROR</span>{% endif %}</div>
+    <div class="sub">run #{{ s.id }} · {{ s.finished }} · <a href="/health#coverage">report</a></div></div>
+</div>
+{% if not s.coverage_ok %}<div class="banner critical section">{% for e in s.coverage_errors %}<div>{{ e }}</div>{% endfor %}</div>{% endif %}
+{% endif %}
+
+<div class="card section">
+  <header>
+    <h2>Ranked combos <small>sorted by {{ request.query_params.get('sort', 'ev') }}</small></h2>
+    <form class="fields" hx-get="/partials/results" hx-target="#results" hx-trigger="change">
+      <select name="family"><option value="">All families</option>{% for fam in res.families %}<option {{ 'selected' if request.query_params.get('family') == fam }}>{{ fam }}</option>{% endfor %}</select>
+      <select name="team"><option value="">All teams</option>{% for t in res.teams %}<option {{ 'selected' if request.query_params.get('team') == t }}>{{ t }}</option>{% endfor %}</select>
+      <select name="max_hours"><option value="">Any kickoff</option>{% for hrs in [6, 24, 48, 96] %}<option value="{{ hrs }}" {{ 'selected' if request.query_params.get('max_hours') == hrs|string }}>within {{ hrs }}h</option>{% endfor %}</select>
+      <select name="sort">{% for k, lab in [('ev','EV%'),('ratio','ratio'),('payout','payout'),('hours','kickoff'),('makers','makers')] %}<option value="{{ k }}" {{ 'selected' if request.query_params.get('sort', 'ev') == k }}>sort: {{ lab }}</option>{% endfor %}</select>
+    </form>
+  </header>
+  {% if not res.rows %}
+    <div class="empty">No probed combos yet. Press <b>Run scan</b>{% if h.env == 'mock' %} (mock exchange: fake makers, offline){% endif %}.</div>
+  {% else %}
+  <div class="tablewrap"><table>
+    <thead><tr>
+      <th>Legs</th><th class="num" title="Fee-inclusive payout at the best quote (taker YES = 1 − best NO bid)">Quoted payout</th>
+      <th class="num" title="Product of fee-inclusive leg payouts at their asks">Leg product</th>
+      <th class="num" title="Quoted payout ÷ leg product. Near 1.0 on correlated legs = the makers' mistake">Ratio</th>
+      <th class="num">Fair payout</th><th class="num" title="Fair × payout − 1, fees included">EV%</th>
+      <th class="num" title="1/4 Kelly × uncertainty shrink, capped">Stake</th><th class="num">Kickoff</th><th class="num">Makers</th><th></th>
+    </tr></thead>
+    <tbody>
+    {% for r in res.rows[:300] %}
+      <tr>
+        <td class="legs">{% for part in r.legs.split(' + ') %}<span class="leg">{{ part }}</span>{% endfor %}
+          <span class="fam">{{ r.family }} · {{ r.fair_source }}
+            {% if r.existed %}<span class="chip free" title="Someone else created it: no creation budget spent">existing</span>{% endif %}
+            {% if r.pool == 'explore' %}<span class="chip">explore</span>{% endif %}
+            {% if r.unpriced %}<span class="chip warn">unpriced leg</span>{% endif %}
+            {% if r.execution %}<span class="chip {{ 'good' if r.execution.decision in ('accept','paper_fill') else '' }}">{{ r.execution.decision }}</span>{% endif %}
+          </span></td>
+        <td class="num">{{ r.quoted_payout|x }}</td>
+        <td class="num">{{ r.leg_payout_product|x }}</td>
+        <td class="num">{{ '—' if r.ratio is none else '%.2f'|format(r.ratio) }}</td>
+        <td class="num">{{ r.fair_payout|x }}</td>
+        <td class="num {{ 'pos' if (r.ev or 0) > 0 else 'neg' }}">{{ r.ev|pct }}<br><small title="EV at the fair model's lower bound">{{ r.ev_lower|pct }}</small></td>
+        <td class="num">{{ r.suggested_stake|money if r.suggested_stake else '—' }}</td>
+        <td class="num">{{ r.hours_to_start|hours }}</td>
+        <td class="num">{{ r.n_makers }}{% if r.quote_spread %}<br><small title="best − second-best NO bid">Δ{{ '%.3f'|format(r.quote_spread) }}</small>{% endif %}</td>
+        <td>{% if r.link %}<a href="{{ r.link }}" target="_blank" rel="noopener" title="Link format unverified">market ↗</a>{% endif %}
+          {% if r.signature and r.combo_ticker %}<form method="post" action="/shop" style="margin-top:4px"><input type="hidden" name="signature" value="{{ r.signature }}"><button class="secondary" type="submit" title="Re-RFQ 3× a few seconds apart">Shop</button></form>{% endif %}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table></div>
+  {% endif %}
+</div>
