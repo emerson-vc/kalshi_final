@@ -39,6 +39,7 @@ def select(
     known: set[str],
     shares: dict[str, float],
     explore_picker: Callable[[list[Candidate], int, int], list[Candidate]] | None = None,
+    exploit_key: Callable[[Candidate], float] | None = None,
     seed: int | None = None,
 ) -> Selection:
     rng = random.Random(seed)
@@ -87,7 +88,8 @@ def select(
         if take(c, "unpriced"):
             k += 1
 
-    for c in priced:
+    exploit_order = sorted(priced, key=exploit_key, reverse=True) if exploit_key else priced
+    for c in exploit_order:
         if len(sel.chosen) >= rfq_budget:
             break
         take(c, "exploit")

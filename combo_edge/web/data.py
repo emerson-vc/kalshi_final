@@ -160,6 +160,8 @@ def learning(db: Database, env: str, st: RuntimeSettings) -> dict[str, Any]:
     by_liq = group_edges(labels, "liq_bucket", [b[2] for b in LIQ_BUCKETS] + ["no book"])
     by_family = group_edges(labels, "family")
     by_dow = group_edges(labels, "dow", ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"])
+    tails = ["main/main", "main/alt", "alt/main", "alt/alt", "main/extreme", "extreme/main", "alt/extreme", "extreme/alt", "extreme/extreme"]
+    by_tail = group_edges(labels, "tail_pair", [t for t in tails] + ["unpriced/main", "main/unpriced"])
     models = db.fetchall("SELECT kind, created_at, n_train, metrics FROM model_versions ORDER BY id DESC LIMIT 20")
     for m in models:
         m["metrics"] = loads(m["metrics"], {}) or {}
@@ -172,7 +174,7 @@ def learning(db: Database, env: str, st: RuntimeSettings) -> dict[str, Any]:
     reached = sum(1 for n in per_stratum.values() if n >= target)
     return {"n_labels": len(labels), "per_stratum": per_stratum.most_common(), "under": under[:40], "reached": reached,
             "n_strata": len(per_stratum), "target": target, "top_strata": [s for s in strata if s["n"] >= 2][:20],
-            "by_hours": by_hours, "by_liq": by_liq, "by_family": by_family, "by_dow": by_dow, "models": models,
+            "by_hours": by_hours, "by_liq": by_liq, "by_family": by_family, "by_dow": by_dow, "by_tail": by_tail, "models": models,
             "promotions": promotions, "recommendation": recommendation, "report": report, "exploration_mode": st.exploration_mode,
             "calibration": db.meta_get(f"calibration:{env}"), "drift": db.meta_get(f"maker_drift:{env}")}
 
@@ -191,8 +193,8 @@ def chart_payload(name: str, db: Database, env: str, st: RuntimeSettings) -> dic
             out[book] = [{"x": timeutil.fmt_local(r["ts"], "%m/%d"), "y": round(100 * float(r["clv"]), 2)} for r in rows]
         return out
     lr = learning(db, env, st)
-    if name in ("hours", "liq", "family", "dow"):
-        rows = lr[{"hours": "by_hours", "liq": "by_liq", "family": "by_family", "dow": "by_dow"}[name]]
+    if name in ("hours", "liq", "family", "dow", "tail"):
+        rows = lr[{"hours": "by_hours", "liq": "by_liq", "family": "by_family", "dow": "by_dow", "tail": "by_tail"}[name]]
         return {"labels": [r["group"] for r in rows], "mean": [_pct(r["mean"]) for r in rows], "lo": [_pct(r["lo"]) for r in rows],
                 "hi": [_pct(r["hi"]) for r in rows], "n": [r["n"] for r in rows]}
     if name == "strata":

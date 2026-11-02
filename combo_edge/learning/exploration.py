@@ -122,7 +122,7 @@ def make_picker(db: Database, env: str, st: RuntimeSettings, seed: int | None = 
                 by_cell[c.stratum_l1].append(c)
         for v in by_cell.values():
             rng.shuffle(v)
-            v.sort(key=lambda c: 0 if c.existed else 1)  # free combos first within a cell
+            v.sort(key=lambda c: 1 if c.existed else 0)  # pop() takes from the end: free combos first within a cell
         under = sorted((k for k in by_cell if stats.get(k, (0, 0, 0))[0] < target), key=lambda k: stats.get(k, (0, 0, 0))[0])
         chosen: list[Candidate] = []
         creates = 0
@@ -144,6 +144,13 @@ def make_picker(db: Database, env: str, st: RuntimeSettings, seed: int | None = 
                 while by_cell[k]:
                     if take(by_cell[k].pop()):
                         break
+        # After the exploration weeks, the explore slice favours pairs the simulator says are correlated
+        # but no template covers (random correlated same-game pairs from the leg graph).
+        if not st.exploration_mode:
+            from combo_edge.learning.bandit import correlated
+
+            for k in by_cell:
+                by_cell[k].sort(key=lambda c: (0 if correlated(c) else 1, 0 if c.existed else 1), reverse=True)
         # 2) Thompson sampling over cells at target: draw a mean edge per cell from its posterior
         mature = [k for k in by_cell if k not in under and by_cell[k]]
         while len(chosen) < n_rfq and any(by_cell[k] for k in mature):

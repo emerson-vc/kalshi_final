@@ -97,6 +97,8 @@ class ScanHooks:
     maker_model_factory: Callable[[Database, str, Universe], Any] | None = None
     explore_picker_factory: Callable[[Database, str, RuntimeSettings], Callable[[list[Candidate], int, int], list[Candidate]]] | None = None
     execution_factory: Callable[..., Any] | None = None
+    exploit_key_factory: Callable[[Database, str], Callable[[Candidate], float]] | None = None
+    prepare: list[Callable[[Database, str], None]] = field(default_factory=list)
     after_probes: list[Callable[..., Awaitable[None] | None]] = field(default_factory=list)
 
 
@@ -285,6 +287,8 @@ async def run_scan(
         progress.phase = "candidates"
         resolver = ComboResolver(clients.api, db, env, uni.collection_ticker, run_id, max_new, st.weekly_creation_cap, st.creation_reserve)
         blocked = resolver.rejections.blocked_classes()
+        for prep in hooks.prepare:
+            prep(db, env)
         cands = generate_candidates(uni, req.families, blocked)
         if hooks.extra_candidates:
             extra = hooks.extra_candidates(uni, st, db, blocked)
@@ -319,8 +323,10 @@ async def run_scan(
         picker = hooks.explore_picker_factory(db, env, st) if hooks.explore_picker_factory else None
         # A dry run creates nothing, so it plans against the full run budget.
         creation_budget = budget if req.dry_run else resolver.budget_left()
+        ekey = hooks.exploit_key_factory(db, env) if hooks.exploit_key_factory else None
         sel = select(cands, rfq_budget=budget, creation_budget=creation_budget, known=known,
-                     shares={"explore": explore, "exploit": exploit, "free": free, "unpriced": st.unpriced_share}, explore_picker=picker)
+                     shares={"explore": explore, "exploit": exploit, "free": free, "unpriced": st.unpriced_share}, explore_picker=picker,
+                     exploit_key=ekey)
         progress.counters["selected"] = len(sel.chosen)
         progress.note(f"selected {len(sel.chosen)} ({', '.join(f'{k}={v}' for k, v in sel.by_pool.items())}); "
                       f"creation budget {creation_budget} (week left {resolver.weekly_left})")

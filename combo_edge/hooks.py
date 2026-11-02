@@ -52,9 +52,15 @@ def update_panel(*, db: Database, env: str, settings: RuntimeSettings, universe:
 
 # ---------------------------------------------------------------- Phase 2: fair model + maker model
 def fair_model(uni: Universe):  # type: ignore[no-untyped-def]
+    from combo_edge.context import default_db
     from combo_edge.fair.model import build_fair_model
 
-    return build_fair_model(uni)
+    fm = build_fair_model(uni)
+    if fm is not None:
+        cal = default_db().meta_get(f"calibration:{uni.env}") or {}
+        for fam, u in ((cal.get("history") or {}).get("family_u") or {}).items():
+            fm.family_u[fam] = fm.family_u[f"no_{fam}"] = float(u)  # wider band where history disagrees
+    return fm
 
 
 def maker_model(db: Database, env: str, uni: Universe):  # type: ignore[no-untyped-def]
@@ -67,6 +73,35 @@ def maker_model(db: Database, env: str, uni: Universe):  # type: ignore[no-untyp
     return m
 
 
+# ---------------------------------------------------------------- Phase 2.5: bandit, promotion, timing, calibration
+def load_promoted(db: Database, env: str) -> None:
+    from combo_edge.learning.promotion import load_promotions
+
+    load_promotions(db)
+
+
+def thompson(db: Database, env: str):  # type: ignore[no-untyped-def]
+    from combo_edge.learning.bandit import Posteriors, rewards, thompson_key
+
+    return thompson_key(Posteriors(rewards(db, env)))
+
+
+def learn_after_run(*, db: Database, env: str, settings: RuntimeSettings, progress: Any, **_: Any) -> None:
+    from combo_edge.learning.calibration import run_calibration
+    from combo_edge.learning.promotion import check_promotions
+    from combo_edge.learning.timing import update_recommendation
+
+    for p in check_promotions(db, env, settings):
+        progress.note(f"PROMOTED new template family: {p['family']} (n={p['n']}, {p['games']} games, mean edge {100 * p['mean']:+.0f}%)")
+    update_recommendation(db, env)
+    last = (db.meta_get(f"calibration:{env}") or {}).get("ts") or 0
+    if timeutil.now() - float(last) > 24 * 3600:
+        try:
+            run_calibration(db, env)
+        except Exception:  # noqa: BLE001
+            log.exception("calibration failed")
+
+
 def default_hooks() -> ScanHooks:
     hooks = ScanHooks()
     hooks.after_probes.append(persist_games)
@@ -75,4 +110,7 @@ def default_hooks() -> ScanHooks:
     hooks.fair_model_factory = fair_model
     hooks.maker_model_factory = maker_model
     hooks.after_probes.append(update_panel)
+    hooks.prepare.append(load_promoted)
+    hooks.exploit_key_factory = thompson
+    hooks.after_probes.append(learn_after_run)
     return hooks

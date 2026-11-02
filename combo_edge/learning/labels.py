@@ -89,6 +89,7 @@ def edge_labels(db: Database, env: str, since: float | None = None, fair_overrid
             "dow": lt.strftime("%a") if lt else "?",
             "hour": lt.hour if lt else None,
             "quote_spread": (r["best_no_bid"] - r["second_no_bid"]) if (r["best_no_bid"] and r["second_no_bid"]) else None,
+            "tail_pair": (base.get("stratum_l2") or "?|").split("|")[0],
         })
     return out
 
