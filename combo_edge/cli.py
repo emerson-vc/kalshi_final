@@ -178,7 +178,7 @@ def cmd_doctor(args: argparse.Namespace) -> int:
         print(f"[{mark}] {text}")
 
     line(platform.machine() == "arm64", f"python {platform.python_version()} on {platform.machine()} ({sys.executable})")
-    envfile = Path(".env")
+    envfile = Path(os.environ.get("COMBO_EDGE_ENV_FILE") or ".env")
     if envfile.exists():
         names = []
         bad = 0

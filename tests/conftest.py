@@ -2,7 +2,7 @@
 - all non-loopback network blocked (so nothing can ever reach demo/prod, including quote accepts),
 - a fresh temp data dir (SQLite, caches),
 - a fresh mock exchange,
-- Kalshi credential variables blanked, so a real .env can never leak into tests.
+- Kalshi credential variables blanked and the .env file redirected, so a real .env can never leak into tests.
 """
 
 from __future__ import annotations
@@ -44,6 +44,7 @@ def _block_network(monkeypatch: pytest.MonkeyPatch) -> None:
 @pytest.fixture(autouse=True)
 def _isolated_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     monkeypatch.setenv("COMBO_EDGE_DATA_DIR", str(tmp_path / "data"))
+    monkeypatch.setenv("COMBO_EDGE_ENV_FILE", str(tmp_path / "no.env"))  # never parse the real .env
     monkeypatch.setenv("KALSHI_ENV", "mock")
     monkeypatch.setenv("COMBO_EDGE_FORBID_LIVE", "1")
     for env in ("DEMO", "PROD"):

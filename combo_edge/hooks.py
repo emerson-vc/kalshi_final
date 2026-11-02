@@ -102,6 +102,35 @@ def learn_after_run(*, db: Database, env: str, settings: RuntimeSettings, progre
             log.exception("calibration failed")
 
 
+# ---------------------------------------------------------------- Phase 3: execution (paper by default), shopping
+def execution_engine(*, db: Database, env: str, settings: RuntimeSettings, run_id: int, universe: Universe, progress: Any):  # type: ignore[no-untyped-def]
+    from combo_edge.execution import ExecutionEngine, get_mode
+
+    if get_mode(db) == "off":
+        return None
+    return ExecutionEngine(db, env, settings, run_id, universe, progress)
+
+
+async def execution_sweep(*, db: Database, env: str, settings: RuntimeSettings, run_id: int, clients: Any, ws: Any, router: Any,
+                          execution: Any, progress: Any, **_: Any) -> None:
+    from combo_edge.positions import settle_executions
+    from combo_edge.shopping import fade_report, make_execution_shopper
+
+    if execution is not None and execution.reshop:
+        shop = make_execution_shopper(clients, db, run_id, execution, ws, router, settings)
+        n = await execution.end_of_run_sweep(shop)
+        if n:
+            progress.note(f"execution: re-shopped {n} candidates with fresh quotes")
+    try:
+        if db.scalar("SELECT COUNT(*) FROM executions WHERE env=:e AND status='executed'", {"e": env}, 0):
+            await settle_executions(clients.api, db)
+        fade = await fade_report(clients, db, env)
+        if fade and fade.get("fading"):
+            progress.note(f"warning: quotes on our RFQs look {100 * (fade['late'] - fade['early']):.0f}% worse than public trades lately (possible fading)")
+    except Exception:  # noqa: BLE001
+        log.exception("post-run settlement/fade check failed")
+
+
 def default_hooks() -> ScanHooks:
     hooks = ScanHooks()
     hooks.after_probes.append(persist_games)
@@ -113,4 +142,6 @@ def default_hooks() -> ScanHooks:
     hooks.prepare.append(load_promoted)
     hooks.exploit_key_factory = thompson
     hooks.after_probes.append(learn_after_run)
+    hooks.execution_factory = execution_engine
+    hooks.after_probes.append(execution_sweep)
     return hooks

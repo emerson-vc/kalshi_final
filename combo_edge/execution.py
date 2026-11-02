@@ -160,7 +160,8 @@ class ExecutionEngine:
         self.universe = universe
         self.progress = progress
         self.arbiter = asyncio.Lock()
-        self.reshop: list[tuple[Candidate, str, float]] = []
+        self.reshop: list[tuple[Candidate, str, float, float]] = []  # (candidate, fix, EV, Kelly stake on the real quote)
+        self.sweeping = False  # inside the end-of-run re-RFQ: a second miss is final (no loops)
         self._stratum_counts: dict[str, int] = {}
         self.exposure = {"paper": self._load_exposure("paper"), "live": self._load_exposure("live")}
 
@@ -234,13 +235,18 @@ class ExecutionEngine:
         d.gates.append(Gate("quote_live", fresh, f"age {age:.1f}s" if age is not None else "no quote", None if fresh else "stale"))
         players = cand.players()
         exp = self.exposure[book]
+        room = exp.room(cand.game_code, players, st.cap_combo, st.cap_game, st.cap_player, cand.signature)
         stake = kelly_stake(fair, fair_lo, payout, st.bankroll, st.kelly_fraction, st.cap_combo)
         stake = clip_to_caps(stake, exp, cand.game_code, players, st.cap_combo, st.cap_game, st.cap_player, cand.signature)
-        if mode == "live" and not self.canary_passed():
+        canary = mode == "live" and not self.canary_passed()
+        if canary:
             stake = min(stake, st.canary_stake) if stake >= st.min_stake else 0.0
         d.stake = stake
-        stake_ok = stake >= st.min_stake and abs(stake - target) <= st.stake_tolerance
-        d.gates.append(Gate("stake_kelly_caps", stake_ok, f"stake ${stake:.2f} vs RFQ ${target:.2f}",
+        # The RFQ size is what executes, so it must match the Kelly stake AND never exceed the cap room;
+        # before the canary passes, it can never exceed the canary stake (no tolerance applies).
+        within_caps = target <= room + 1e-9 and (not canary or target <= st.canary_stake + 1e-9)
+        stake_ok = stake >= st.min_stake and abs(stake - target) <= st.stake_tolerance and within_caps
+        d.gates.append(Gate("stake_kelly_caps", stake_ok, f"stake ${stake:.2f} vs RFQ ${target:.2f}, cap room ${room:.2f}",
                             "stake_mismatch" if stake >= st.min_stake and not stake_ok else None))
         dup = exp.by_signature.get(cand.signature, 0.0) > 0
         d.gates.append(Gate("no_duplicate", not dup, "already holding this combo" if dup else ""))
@@ -285,13 +291,13 @@ class ExecutionEngine:
                 trip = self._limits_would_trip(d)
                 if trip:
                     self._trip(f"loss/bet limit reached ({trip})")
-                fix = d.fixable  # e.g. live before the canary: the $1 stake mismatches the probe size -> re-RFQ at $1
+                fix = None if self.sweeping else d.fixable  # e.g. live before the canary: $1 stake vs probe size -> re-RFQ at $1
                 if fix:
-                    self.reshop.append((cand, fix, d.ev or 0.0))
+                    self.reshop.append((cand, fix, d.ev or 0.0, d.stake or 0.0))
                     self._log(cand, ctx, d, mode, "shop", f"deferred to end-of-run re-RFQ ({fix}): {d.reason()}")
                 else:
-                    self._log(cand, ctx, d, mode, "reject", d.reason())
-                return {"decision": "shop" if fix else "reject", "executed": False, "reason": d.reason()}
+                    self._log(cand, ctx, d, mode, "reject", ("after re-RFQ: " if self.sweeping else "") + d.reason())
+                return {"decision": "shop" if fix else "reject", "executed": False, "reason": d.reason(), "fixable": bool(d.fixable)}
             if mode == "paper":
                 self._paper_fill(cand, ctx, d)
                 return {"decision": "paper_fill", "executed": False, "stake": d.stake, "ev": d.ev}
@@ -409,12 +415,23 @@ class ExecutionEngine:
         """Re-RFQ deferred candidates (best EV first) once each, re-checking every gate on the fresh quote."""
         done = 0
         seen: set[str] = set()
-        for cand, fix, _ev in sorted(self.reshop, key=lambda x: -x[2]):
+        queue, self.reshop = sorted(self.reshop, key=lambda x: -x[2]), []
+        self.sweeping = True
+        try:
+            done = await self._sweep(queue, shop, seen)
+        finally:
+            self.sweeping = False
+        return done
+
+    async def _sweep(self, queue: list[tuple[Candidate, str, float, float]], shop: Any, seen: set[str]) -> int:
+        done = 0
+        for cand, _fix, _ev, quoted_stake in queue:
             if cand.signature in seen or get_mode(self.db) == "off" or is_killed(self.db):
                 continue
             seen.add(cand.signature)
             mode = get_mode(self.db)
-            stake = kelly_stake(cand.fair_joint, cand.fair_lower, cand.expected_payout, self.st.bankroll, self.st.kelly_fraction, self.st.cap_combo)
+            # size from the Kelly stake the gate computed on the real quote (not the prescore's expected payout)
+            stake = quoted_stake
             if mode == "live" and not self.canary_passed():
                 stake = self.st.canary_stake
             stake = clip_to_caps(stake, self.exposure["live" if mode == "live" else "paper"], cand.game_code, cand.players(),
@@ -423,7 +440,6 @@ class ExecutionEngine:
                 continue
             await shop(cand, round(stake, 2))
             done += 1
-        self.reshop.clear()
         return done
 
 

@@ -101,10 +101,11 @@ async def test_panel_slots_and_requote_due_never_creates(mock_exchange) -> None:
     db.execute("UPDATE requote_slots SET due_at=:n WHERE offset_h=24", {"n": timeutil.now() - 60})
     db.settings_set({"requote_enabled": True})
     creations_before = db.scalar("SELECT COUNT(*) FROM creation_ledger")
+    decisions_before = db.scalar("SELECT COUNT(*) FROM execution_decisions")  # the scan's own (paper) decisions
     out = await requote_due("mock", db)
     assert out["status"] == "done" and out["probed"] == n_panel
     assert db.scalar("SELECT COUNT(*) FROM creation_ledger") == creations_before  # never creates combos
-    assert db.scalar("SELECT COUNT(*) FROM execution_decisions") == 0  # never bets
+    assert db.scalar("SELECT COUNT(*) FROM execution_decisions") == decisions_before  # never bets
     assert not mock_exchange.open_rfq_by_ticker
     done = db.scalar("SELECT COUNT(*) FROM requote_slots WHERE status='done' AND offset_h=24")
     assert done == n_panel

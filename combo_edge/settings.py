@@ -69,7 +69,8 @@ class CredentialError(Exception):
 
 
 def load_env_settings() -> EnvSettings:
-    return EnvSettings()
+    # COMBO_EDGE_ENV_FILE lets tests (and alternate setups) point away from the repo's .env
+    return EnvSettings(_env_file=os.environ.get("COMBO_EDGE_ENV_FILE") or ".env")  # type: ignore[call-arg]
 
 
 def credentials_for(env: str, es: EnvSettings | None = None) -> Credentials | None:

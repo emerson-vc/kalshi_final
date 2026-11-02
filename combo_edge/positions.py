@@ -73,9 +73,16 @@ def price_paid(db: Database, env: str, ticker: str) -> tuple[float | None, float
     return sum(float(r["count"] or 0) * float(r["price"] or 0) for r in rows) / n, n
 
 
-def latest_requote(db: Database, env: str, ticker: str, before: float | None = None) -> dict[str, Any] | None:
+def latest_requote(db: Database, env: str, ticker: str, before: float | None = None, after: float | None = None,
+                   exclude_rfq: str | None = None) -> dict[str, Any] | None:
     sql = "SELECT taker_yes_price, combo_payout, created_at FROM rfqs WHERE env=:e AND combo_ticker=:t AND taker_yes_price IS NOT NULL"
     params: dict[str, Any] = {"e": env, "t": ticker}
+    if after is not None:
+        sql += " AND created_at > :a"
+        params["a"] = after
+    if exclude_rfq:
+        sql += " AND rfq_id != :x"
+        params["x"] = exclude_rfq
     if before is not None:
         sql += " AND created_at < :b"
         params["b"] = before
@@ -120,7 +127,8 @@ async def settle_executions(api: KalshiAPI, db: Database) -> int:
         m = markets.get(r["combo_ticker"]) or {}
         result = (m.get("result") or "").lower()
         game = db.fetchone("SELECT kickoff FROM games WHERE game_code=:g", {"g": r["game_code"]})
-        close = latest_requote(db, env, r["combo_ticker"], before=(game or {}).get("kickoff"))
+        # the close is a quote obtained after the bet (never the bet's own RFQ), before kickoff
+        close = latest_requote(db, env, r["combo_ticker"], before=(game or {}).get("kickoff"), after=r["ts"], exclude_rfq=r["rfq_id"])
         clv = None
         if close and close.get("combo_payout") and r["payout"]:
             clv = float(r["payout"]) / float(close["combo_payout"]) - 1.0

@@ -88,7 +88,7 @@ def create_app(db: Database, env: str | None = None) -> FastAPI:
     async def scan_page(request: Request, family: str = "", team: str = "", max_hours: str = "", sort: str = "ev") -> HTMLResponse:
         mh = float(max_hours) if max_hours else None
         res = data.results(db, state.env, family, team, mh, sort)
-        return templates.TemplateResponse(request, "scan.html", ctx(request, "scan", res=res, summary=data.run_summary(res["run"]),
+        return templates.TemplateResponse(request, "scan.html", ctx(request, "scan", res=res, summary=data.run_summary(res["run"]), shop=db.meta_get("last_shop"),
                                                                     f={"family": family, "team": team, "max_hours": max_hours, "sort": sort}))
 
     @app.get("/bets", response_class=HTMLResponse)
