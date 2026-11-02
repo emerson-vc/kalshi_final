@@ -55,8 +55,18 @@ class Database:
 
     def init_schema(self) -> None:
         schema.metadata.create_all(self.engine)
+        self._add_missing_columns()
         if self.meta_get("schema_version") is None:
             self.meta_set("schema_version", schema.SCHEMA_VERSION)
+
+    def _add_missing_columns(self) -> None:
+        """Additive migration: columns defined in the schema but missing from an existing table are added."""
+        with self.engine.begin() as conn:
+            for table in schema.metadata.sorted_tables:
+                have = {r[1] for r in conn.exec_driver_sql(f'PRAGMA table_info("{table.name}")')}
+                for col in table.columns:
+                    if col.name not in have:
+                        conn.exec_driver_sql(f'ALTER TABLE "{table.name}" ADD COLUMN "{col.name}" {col.type.compile(self.engine.dialect)}')
 
     # ---------------------------------------------------------------- core helpers
     def execute(self, sql: str | Any, params: Mapping[str, Any] | Sequence[Mapping[str, Any]] | None = None) -> Any:

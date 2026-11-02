@@ -44,7 +44,7 @@ def edge_labels(db: Database, env: str, since: float | None = None, fair_overrid
     rows = db.fetchall(
         "SELECT r.rfq_id, r.run_id, r.signature, r.purpose, r.created_at, r.hours_to_start, r.combo_payout, r.n_makers, r.offset_h, "
         "r.best_no_bid, r.second_no_bid, r.target_cost, r.feed_demand_pair, c.family, c.stratum_l1, c.stratum_l2, c.fair_joint, c.fair_lower, "
-        "c.legs, c.existed, c.game_code, c.leg_payout_product, c.p_a, c.p_b "
+        "c.legs, c.existed, c.game_code, c.leg_payout_product, c.p_a, c.p_b, c.team_total_main, c.game_total_main, c.spread_main "
         "FROM rfqs r LEFT JOIN candidates c ON r.candidate_id = c.id "
         "WHERE r.env = :e AND r.outcome = 'quoted' AND r.combo_payout IS NOT NULL AND r.created_at >= :t",
         {"e": env, "t": since or 0.0},
@@ -53,8 +53,8 @@ def edge_labels(db: Database, env: str, since: float | None = None, fair_overrid
     latest: dict[str, dict[str, Any]] = {}
     if need:
         for c in db.fetchall(
-            "SELECT signature, family, stratum_l1, stratum_l2, fair_joint, fair_lower, legs, existed, game_code, leg_payout_product, p_a, p_b "
-            "FROM candidates WHERE fair_joint IS NOT NULL ORDER BY id"
+            "SELECT signature, family, stratum_l1, stratum_l2, fair_joint, fair_lower, legs, existed, game_code, leg_payout_product, p_a, p_b, "
+            "team_total_main, game_total_main, spread_main FROM candidates WHERE fair_joint IS NOT NULL ORDER BY id"
         ):
             if c["signature"] in need:
                 latest[c["signature"]] = c

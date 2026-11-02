@@ -122,3 +122,14 @@ async def test_templates_walk_full_ladders_and_skip_prot_precise(mock_exchange) 
             break
     no_pairs = list(FAMILIES["no_qb_ptd_x_team_total"].generator(idx))
     assert no_pairs and all(a.side == "no" and b.side == "no" for a, b in no_pairs)
+
+
+def test_same_ladder_pairs_are_structural() -> None:
+    from combo_edge.sports.base import Leg, SidedLeg
+    from combo_edge.sports.nfl.implications import structural_rule
+
+    a = Leg("T1", "E1", "KXNFL1HTEAMTOTAL", "G", "h1_team_total", "team", team="CHI", threshold=20.5)
+    b = Leg("T2", "E1", "KXNFL1HTEAMTOTAL", "G", "h1_team_total", "team", team="CHI", threshold=23.5)
+    c = Leg("T3", "E1", "KXNFL1HTEAMTOTAL", "G", "h1_team_total", "team", team="SEA", threshold=20.5)
+    assert structural_rule(SidedLeg(a, "yes"), SidedLeg(b, "yes")) == "same_ladder"
+    assert structural_rule(SidedLeg(a, "yes"), SidedLeg(c, "yes")) is None

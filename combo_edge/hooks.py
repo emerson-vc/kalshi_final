@@ -50,10 +50,29 @@ def update_panel(*, db: Database, env: str, settings: RuntimeSettings, universe:
         log.info("re-quote panel: added %d combos", n)
 
 
+# ---------------------------------------------------------------- Phase 2: fair model + maker model
+def fair_model(uni: Universe):  # type: ignore[no-untyped-def]
+    from combo_edge.fair.model import build_fair_model
+
+    return build_fair_model(uni)
+
+
+def maker_model(db: Database, env: str, uni: Universe):  # type: ignore[no-untyped-def]
+    from combo_edge.learning.maker_model import train
+    from combo_edge.scan import runtime_settings
+
+    m = train(db, env, runtime_settings(db).maker_half_life_days)
+    if m is not None:
+        m.universe = uni
+    return m
+
+
 def default_hooks() -> ScanHooks:
     hooks = ScanHooks()
     hooks.after_probes.append(persist_games)
     hooks.extra_candidates = exploration_and_feed
     hooks.explore_picker_factory = explore_picker
+    hooks.fair_model_factory = fair_model
+    hooks.maker_model_factory = maker_model
     hooks.after_probes.append(update_panel)
     return hooks

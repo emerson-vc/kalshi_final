@@ -64,3 +64,12 @@
   </table></div>
   {% endif %}
 </div>
+
+{% if res.flags %}
+<details class="card section">
+  <summary><b>Model vs Kalshi disagreements</b> · {{ res.flags|length }} player props where our nflverse model and the Kalshi mid differ a lot. Check these by hand (e.g. OddsJam); the fair price blends both.</summary>
+  <div class="tablewrap" style="margin-top:10px"><table><thead><tr><th>Leg</th><th class="num">Kalshi mid</th><th class="num">Model</th><th class="num">Weight on Kalshi</th></tr></thead><tbody>
+  {% for f in res.flags %}<tr><td>{{ f.leg }}</td><td class="num">{{ '%.3f'|format(f.kalshi) }}</td><td class="num">{{ '%.3f'|format(f.model) }}</td><td class="num">{{ '%.0f%%'|format(100 * f.weight_kalshi) }}</td></tr>{% endfor %}
+  </tbody></table></div>
+</details>
+{% endif %}

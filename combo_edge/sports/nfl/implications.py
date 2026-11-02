@@ -17,6 +17,8 @@ def structural_rule(a: SidedLeg, b: SidedLeg) -> str | None:
         return "yes_only_event"
     if la.player_key and la.player_key == lb.player_key and la.kind == lb.kind:
         return "same_player_ladder"
+    if la.kind == lb.kind and la.scope == lb.scope and la.scope in ("team", "game") and la.team == lb.team and la.game_code == lb.game_code:
+        return "same_ladder"  # two rungs of one team/game ladder: one implies the other
     return None
 
 

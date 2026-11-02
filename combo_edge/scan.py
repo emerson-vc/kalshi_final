@@ -94,7 +94,7 @@ class ScanHooks:
 
     extra_candidates: Callable[[Universe, RuntimeSettings, Database, set[str]], list[Candidate]] | None = None
     fair_model_factory: Callable[[Universe], Any] | None = None
-    maker_model_factory: Callable[[Database], Any] | None = None
+    maker_model_factory: Callable[[Database, str, Universe], Any] | None = None
     explore_picker_factory: Callable[[Database, str, RuntimeSettings], Callable[[list[Candidate], int, int], list[Candidate]]] | None = None
     execution_factory: Callable[..., Any] | None = None
     after_probes: list[Callable[..., Awaitable[None] | None]] = field(default_factory=list)
@@ -143,7 +143,14 @@ def _rule_class(c: Candidate) -> str | None:
     return None
 
 
-def _persist_candidates(db: Database, run_id: int, cands: list[Candidate], chosen: set[str], top_unselected: int = 1000) -> None:
+def _persist_candidates(db: Database, run_id: int, cands: list[Candidate], chosen: set[str], top_unselected: int = 1000,
+                        uni: Universe | None = None) -> None:
+    from combo_edge.gamelines import game_lines
+
+    lines: dict[str, dict] = {}
+    if uni is not None:
+        for code, g in uni.games.items():
+            lines[code] = game_lines(uni.legs_by_game.get(code, []), (g.away_team, g.home_team))
     keep = [c for c in cands if c.signature in chosen]
     rest = sorted((c for c in cands if c.signature not in chosen and c.expected_ev is not None), key=lambda c: -(c.expected_ev or 0))[:top_unselected]
     rows = []
@@ -154,13 +161,25 @@ def _persist_candidates(db: Database, run_id: int, cands: list[Candidate], chose
                      "fair_lower": c.fair_lower, "fair_source": c.fair_source, "fair_version": c.fair_version,
                      "leg_payout_product": c.leg_payout_product, "expected_ratio": c.expected_ratio, "expected_payout": c.expected_payout,
                      "expected_ev": c.expected_ev, "unpriced": c.unpriced, "pool": c.pool if c.signature in chosen else "",
-                     "rank": rank_i, "combo_ticker": c.combo_ticker, "existed": c.existed})
+                     "rank": rank_i, "combo_ticker": c.combo_ticker, "existed": c.existed,
+                     **_env_features(c, lines.get(c.game_code), uni)})
     for i in range(0, len(rows), 2000):
         db.insert_many(S.candidates, rows[i : i + 2000])
     ids = db.fetchall("SELECT id, signature FROM candidates WHERE run_id=:r", {"r": run_id})
     by_sig = {r["signature"]: r["id"] for r in ids}
     for c in keep:
         c.candidate_id = by_sig.get(c.signature)
+
+
+def _env_features(c: Candidate, gl: dict | None, uni: Universe | None) -> dict[str, Any]:
+    team = next((s.leg.team for s in c.legs if s.leg.team), None)
+    out: dict[str, Any] = {"hours_to_start": uni.hours_to_start(c.game_code) if uni else None,
+                           "predicted_ratio": c.expected_ratio if c.fair_source else None}
+    if gl:
+        out["game_total_main"] = gl.get("total")
+        out["team_total_main"] = (gl.get("team_total") or {}).get(team) if team else None
+        out["spread_main"] = (gl.get("spread") or {}).get(team) if team else None
+    return out
 
 
 def _summary(results: list[ProbeResult], resolver: ComboResolver | None, limiter: Any) -> dict[str, Any]:
@@ -280,8 +299,14 @@ async def run_scan(
         progress.note(f"{len(cands)} candidates from {len(set(c.family for c in cands))} families")
 
         progress.phase = "prescore"
-        fair_model = hooks.fair_model_factory(uni) if hooks.fair_model_factory else None
-        maker_model = hooks.maker_model_factory(db) if hooks.maker_model_factory else None
+        fair_model = await asyncio.to_thread(hooks.fair_model_factory, uni) if hooks.fair_model_factory else None
+        if fair_model is not None:
+            progress.note(f"fair model: {sum(1 for g in fair_model.games.values() if g)} games simulated, "
+                          f"{len(fair_model.flags)} legs flagged vs Kalshi")
+            db.meta_set(f"fair_flags:{env}", {"run_id": run_id, "ts": timeutil.now(), "flags": fair_model.flags[:300]})
+        maker_model = await asyncio.to_thread(hooks.maker_model_factory, db, env, uni) if hooks.maker_model_factory else None
+        if maker_model is not None:
+            progress.note(f"maker model: {maker_model.kind} on {maker_model.n_train} quotes")
         scorer = Prescorer(load_priors(), fair_model, maker_model)
         await asyncio.to_thread(scorer.score, cands)
         if len(cands) > st.max_candidates:
@@ -299,7 +324,7 @@ async def run_scan(
         progress.counters["selected"] = len(sel.chosen)
         progress.note(f"selected {len(sel.chosen)} ({', '.join(f'{k}={v}' for k, v in sel.by_pool.items())}); "
                       f"creation budget {creation_budget} (week left {resolver.weekly_left})")
-        _persist_candidates(db, run_id, cands, {c.signature for c in sel.chosen})
+        _persist_candidates(db, run_id, cands, {c.signature for c in sel.chosen}, uni=uni)
         uni.coverage.check_games_with_props(PLAYER_PROP_KINDS)
 
         if req.dry_run:

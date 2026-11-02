@@ -58,7 +58,9 @@ def results(db: Database, env: str, family: str = "", team: str = "", max_hours:
            "hours": lambda r: (r.get("hours_to_start") if r.get("hours_to_start") is not None else 1e9),
            "makers": lambda r: -(r.get("n_makers") or 0)}.get(sort, lambda r: -(r.get("ev") or -9))
     rows.sort(key=key)
-    return {"run": run, "rows": rows, "families": families, "teams": teams}
+    flags = (db.meta_get(f"fair_flags:{env}") or {}).get("flags", [])
+    flags = sorted(flags, key=lambda f: -abs((f.get("model") or 0) - (f.get("kalshi") or 0)))
+    return {"run": run, "rows": rows, "families": families, "teams": teams, "flags": flags[:60]}
 
 
 def run_summary(run: dict[str, Any] | None) -> dict[str, Any]:

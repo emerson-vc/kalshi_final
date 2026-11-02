@@ -197,6 +197,12 @@ candidates = Table(
     Column("rank", Integer),
     Column("combo_ticker", Text),
     Column("existed", Integer),
+    Column("hours_to_start", Float),
+    Column("team_total_main", Float),
+    Column("game_total_main", Float),
+    Column("spread_main", Float),
+    Column("feed_demand", Integer),
+    Column("predicted_ratio", Float),
 )
 Index("ix_cand_run", candidates.c.run_id)
 Index("ix_cand_sig", candidates.c.signature)
