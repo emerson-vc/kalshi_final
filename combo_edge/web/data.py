@@ -73,8 +73,19 @@ def run_summary(run: dict[str, Any] | None) -> dict[str, Any]:
         "rfqs": s.get("rfqs_sent"), "quoted": s.get("quoted"), "fill_rate": s.get("fill_rate"),
         "ttfq": s.get("ttfq_median_ms"), "makers": s.get("makers_mean"), "creations": s.get("creations_this_run"),
         "coverage_ok": cov.get("ok", True), "coverage_errors": cov.get("errors", []), "outcomes": s.get("outcomes", {}),
-        "dry_run": bool(run.get("params", {}).get("dry_run")),
+        "dry_run": bool(run.get("params", {}).get("dry_run")), "core": core_summary(s.get("core") or []),
     }
+
+
+def core_summary(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Core-sweep coverage per (game, sweep), with the per-player/team pairs underneath."""
+    out: dict[tuple[str, str], dict[str, Any]] = {}
+    for r in rows:
+        g = out.setdefault((r["game"], r["sweep"]), {"game": r["game"], "label": r["label"], "available": 0, "selected": 0, "quoted": 0, "pairs": []})
+        for k in ("available", "selected", "quoted"):
+            g[k] += r[k]
+        g["pairs"].append(r)
+    return list(out.values())
 
 
 def health(db: Database, env: str, st: RuntimeSettings) -> dict[str, Any]:

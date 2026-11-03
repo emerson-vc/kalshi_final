@@ -1,0 +1,29 @@
+# Core sweeps: combo patterns that are swept in full every run, for every player/team in every game
+# with markets open. They get the "core" share of the RFQ budget (default 50%) before ranked picks.
+#
+# A sweep is two legs (either order), YES side on both, same team, each with:
+#   kind        Kalshi stat kind (pass_td, team_total, anytime_td, pass_yds, rec_yds, h1_spread, ml)
+#   positions   optional player positions (QB, WR, TE, RB)
+#   min / max   threshold window on the "over X" line (pass TD 3+ is threshold 2.5; team o24.5 is 24.5)
+# Edit freely; the next scan picks the change up.
+
+sweeps:
+  qb_ptd_x_team_total:
+    label: QB pass TD × own team total
+    a: {kind: pass_td, positions: [QB], min: 2.5}               # 3+, 4+, 5+
+    b: {kind: team_total, min: 17.5, max: 31.5}                 # o17.5 … o31.5
+
+  rec_td_x_team_total:
+    label: WR/TE TD × own team total
+    a: {kind: anytime_td, positions: [WR, TE], min: 1.5}        # 2+, 3+
+    b: {kind: team_total, min: 17.5, max: 31.5}
+
+  qb_pyds_x_rec_yds:
+    label: QB yds × own WR/TE rec yds
+    a: {kind: pass_yds, positions: [QB], min: 274.5, max: 324.5}  # 275+, 300+, 325+
+    b: {kind: rec_yds, positions: [WR, TE], min: 99.5, max: 189.5} # 100+ … 190+
+
+  ml_x_h1_lead:
+    label: Team ML × 1H lead
+    a: {kind: h1_spread, min: 2.5}                              # wins 1H by 2.5+ … 13.5+
+    b: {kind: ml}

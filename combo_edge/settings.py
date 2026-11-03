@@ -14,7 +14,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 EnvName = Literal["demo", "prod", "mock"]
@@ -142,10 +142,12 @@ class RuntimeSettings(BaseModel):
     # --- exploration / bandit ---
     exploration_mode: bool = True
     prot_in_exploration: bool = True
-    explore_share: float = 0.70
-    exploit_share: float = 0.15
-    free_share: float = 0.15
-    post_explore_exploit_share: float = 0.85
+    # RFQ budget split per run (must sum to 1). Core = the sweeps in config/core.yaml.
+    core_share: float = Field(0.50, ge=0.0, le=1.0)
+    exploit_share: float = Field(0.25, ge=0.0, le=1.0)
+    free_share: float = Field(0.15, ge=0.0, le=1.0)
+    explore_share: float = Field(0.10, ge=0.0, le=1.0)
+    core_requote_after_h: float = 6.0  # core combos quoted this recently go to the back of the next run's queue
     stratum_target_quotes: int = 30
     promotion_min_quotes: int = 30
     promotion_min_games: int = 3
@@ -187,12 +189,16 @@ class RuntimeSettings(BaseModel):
     # --- misc ---
     market_link_template: str = "https://kalshi.com/markets/{series_lower}/{event_lower}"
 
-    def explore_split(self) -> tuple[float, float, float]:
-        """(explore, exploit, free) budget shares for this run."""
-        if self.exploration_mode:
-            return self.explore_share, self.exploit_share, self.free_share
-        exploit = self.post_explore_exploit_share
-        return 1.0 - exploit, exploit, 0.0
+    @model_validator(mode="after")
+    def _shares_sum_to_one(self) -> "RuntimeSettings":
+        total = self.core_share + self.exploit_share + self.free_share + self.explore_share
+        if abs(total - 1.0) > 0.011:
+            raise ValueError(f"core + exploit + free + explore shares must add up to 100% (got {total:.0%})")
+        return self
+
+    def budget_shares(self) -> dict[str, float]:
+        """RFQ budget shares for this run, by pool."""
+        return {"core": self.core_share, "exploit": self.exploit_share, "free": self.free_share, "explore": self.explore_share}
 
     def merged(self, changes: dict[str, Any]) -> "RuntimeSettings":
         data = self.model_dump()

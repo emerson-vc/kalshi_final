@@ -28,6 +28,7 @@ EDITABLE = {
     "cap_combo": float, "cap_game": float, "cap_player": float, "kelly_fraction": float, "ev_min": float,
     "daily_loss_limit": float, "weekly_loss_limit": float, "max_bets_per_day": int, "creation_reserve": int,
     "stack_warn": int, "max_open_rfqs": int, "stratum_min_quotes": int,
+    "core_share": float, "exploit_share": float, "free_share": float, "explore_share": float,
 }
 
 
@@ -283,7 +284,7 @@ def create_app(db: Database, env: str | None = None) -> FastAPI:
 
         path = write_exploration_report(db, state.env, state.settings())
         db.settings_set({"exploration_mode": False})
-        state.note("ok", f"Exploration report written to {path}; default budget is now 85% exploit / 15% explore.")
+        state.note("ok", f"Exploration report written to {path}.")
         return RedirectResponse("/learning", 303)
 
     return app

@@ -10,7 +10,7 @@ from collections.abc import Iterator
 
 from combo_edge.candidates import GameIndex, family, negated
 from combo_edge.sports.base import Leg, SidedLeg
-from combo_edge.sports.nfl.roster import is_rb, is_receiver, is_wr
+from combo_edge.sports.nfl.roster import is_rb, is_receiver
 
 Pair = tuple[SidedLeg, SidedLeg]
 
@@ -57,9 +57,9 @@ def qb_ptd_x_rec_td(idx: GameIndex) -> Iterator[Pair]:
             yield from _cross(q_ladder, idx.ladder(rec.player_key or "", "anytime_td"))
 
 
-@family("wr_td_x_team_total", "WR anytime/2+/3+ TD × own team total overs")
+@family("wr_td_x_team_total", "WR/TE anytime/2+/3+ TD × own team total overs")
 def wr_td_x_team_total(idx: GameIndex) -> Iterator[Pair]:
-    for wr in idx.players_where(lambda p: is_wr(p.position)):
+    for wr in idx.players_where(lambda p: is_receiver(p.position)):
         yield from _cross(idx.ladder(wr.player_key or "", "anytime_td"), idx.team_ladder(wr.team, "team_total"))
 
 

@@ -18,6 +18,8 @@ from combo_edge import timeutil
 from combo_edge.candidates import FAMILIES, Candidate, GameIndex
 from combo_edge.combos import ComboResolver
 from combo_edge.context import EnvClients, log_limits, make_clients
+from combo_edge.core import coverage as core_coverage
+from combo_edge.core import load_core
 from combo_edge.prescore import Prescorer, load_priors
 from combo_edge.probe import ProbeEngine, ProbeRequest, ProbeResult, cleanup_our_open_rfqs, drain_pending_cancels
 from combo_edge.quotes import QuoteRouter
@@ -319,14 +321,18 @@ async def run_scan(
 
         progress.phase = "select"
         known = set(resolver.index.lookup_many([c.signature for c in cands]))
-        explore, exploit, free = st.explore_split()
+        shares = {**st.budget_shares(), "unpriced": st.unpriced_share}
+        sweeps = load_core()
+        recent = {r["signature"] for r in db.fetchall(
+            "SELECT DISTINCT signature FROM rfqs WHERE env=:e AND created_at >= :t AND outcome='quoted' AND signature IS NOT NULL",
+            {"e": env, "t": timeutil.now() - st.core_requote_after_h * 3600})}
         picker = hooks.explore_picker_factory(db, env, st) if hooks.explore_picker_factory else None
         # A dry run creates nothing, so it plans against the full run budget.
         creation_budget = budget if req.dry_run else resolver.budget_left()
         ekey = hooks.exploit_key_factory(db, env) if hooks.exploit_key_factory else None
-        sel = select(cands, rfq_budget=budget, creation_budget=creation_budget, known=known,
-                     shares={"explore": explore, "exploit": exploit, "free": free, "unpriced": st.unpriced_share}, explore_picker=picker,
-                     exploit_key=ekey)
+        sel = select(cands, rfq_budget=budget, creation_budget=creation_budget, known=known, shares=shares, explore_picker=picker,
+                     exploit_key=ekey, core=sweeps, recently_quoted=recent)
+        chosen_sigs = {c.signature for c in sel.chosen}
         progress.counters["selected"] = len(sel.chosen)
         progress.note(f"selected {len(sel.chosen)} ({', '.join(f'{k}={v}' for k, v in sel.by_pool.items())}); "
                       f"creation budget {creation_budget} (week left {resolver.weekly_left})")
@@ -336,7 +342,8 @@ async def run_scan(
         if req.dry_run:
             rows = [_dry_row(c, st) for c in sel.chosen]
             status = "dry_run"
-            return ScanResult(run_id, status, rank(rows), uni.coverage.to_dict(), {"dry_run": True})
+            summary = {"dry_run": True, "core": core_coverage(cands, sweeps, chosen_sigs)}
+            return ScanResult(run_id, status, rank(rows), uni.coverage.to_dict(), summary)
 
         progress.phase = "snapshots"
         legs = {s.leg.ticker: s.leg for c in sel.chosen for s in c.legs}
@@ -398,6 +405,7 @@ async def run_scan(
         elif not uni.coverage.ok:
             status = "coverage_error"
         summary = _summary(results, resolver, clients.limiter)
+        summary["core"] = core_coverage(cands, sweeps, chosen_sigs, {r.request.signature for r in results if r.quoted})
         progress.note(f"done: {summary['quoted']}/{summary['rfqs_sent']} RFQs quoted"
                       + (f", fill rate {summary['fill_rate']:.0%}" if summary.get("fill_rate") is not None else ""))
     except Exception as exc:

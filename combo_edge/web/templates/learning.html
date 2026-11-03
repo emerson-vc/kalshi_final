@@ -5,11 +5,23 @@
   <div class="card tile"><div class="label">Strata at target</div><div class="value">{{ l.reached }}/{{ l.n_strata }}</div>
     <div class="sub">≥ {{ l.target }} quotes per leg-type pair × relation</div>
     <div class="meter"><i style="width: {{ (100 * l.reached / l.n_strata) if l.n_strata else 0 }}%"></i></div></div>
-  <div class="card tile"><div class="label">Budget mode</div><div class="value">{{ 'Explore' if l.exploration_mode else 'Exploit' }}</div>
-    <div class="sub">{{ '70% explore · 15% exploit · 15% free combos' if l.exploration_mode else '85% exploit · 15% explore' }}</div></div>
+  <div class="card tile"><div class="label">RFQ budget split</div><div class="value">{{ '%.0f%%'|format(100 * st.core_share) }} core</div>
+    <div class="sub">{{ '%.0f%%'|format(100 * st.exploit_share) }} best-ranked · {{ '%.0f%%'|format(100 * st.free_share) }} free combos · {{ '%.0f%%'|format(100 * st.explore_share) }} exploration</div></div>
   <div class="card tile"><div class="label">When to press Run</div>
     <div class="value" style="font-size:18px">{{ l.recommendation.headline if l.recommendation else 'Not enough data' }}</div>
     <div class="sub">{{ l.recommendation.detail if l.recommendation else 'Needs quotes across several days and hours-to-kickoff buckets' }}</div></div>
+</div>
+
+<div class="card section">
+  <header><h2>RFQ budget split</h2><small>shares of each run's RFQ budget; must add up to 1.0</small></header>
+  <form method="post" action="/settings" class="fields">
+    <input type="hidden" name="back" value="/learning">
+    <label class="f">Core sweeps<input type="number" name="core_share" step="0.05" min="0" max="1" value="{{ st.core_share }}"></label>
+    <label class="f">Best-ranked<input type="number" name="exploit_share" step="0.05" min="0" max="1" value="{{ st.exploit_share }}"></label>
+    <label class="f">Free combos<input type="number" name="free_share" step="0.05" min="0" max="1" value="{{ st.free_share }}"></label>
+    <label class="f">Exploration<input type="number" name="explore_share" step="0.05" min="0" max="1" value="{{ st.explore_share }}"></label>
+    <button class="secondary" type="submit">Save</button>
+  </form>
 </div>
 
 <div class="grid g2 section">
@@ -28,7 +40,7 @@
 <div class="grid g2 section">
   <div class="card"><header><h2>Exploration progress</h2><small>quotes per stratum (top 30)</small></header>
     <div class="chart tall" data-chart="count" data-horizontal="1" data-label="quotes" data-src="/api/chart/strata"></div>
-    {% if l.exploration_mode %}<form method="post" action="/exploration/finish" style="margin-top:10px" onsubmit="return confirm('Write the exploration report and switch to 85% exploit / 15% explore?')">
+    {% if l.exploration_mode %}<form method="post" action="/exploration/finish" style="margin-top:10px" onsubmit="return confirm('Write the exploration report?')">
       <button class="secondary" type="submit">Finish exploration &amp; write report</button></form>{% endif %}
   </div>
   <div class="card"><header><h2>Still under-sampled</h2><small>fewest quotes first</small></header>

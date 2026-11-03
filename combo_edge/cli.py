@@ -106,10 +106,17 @@ def cmd_scan(args: argparse.Namespace) -> int:
     if s and not s.get("dry_run"):
         fr = s.get("fill_rate")
         print(f"RFQs {s.get('rfqs_sent')} · quoted {s.get('quoted')} · fill rate {fr:.0%}" if fr is not None else f"RFQs {s.get('rfqs_sent')}")
+    core = (s or {}).get("core") or []
+    if core:
+        verb = "planned" if s.get("dry_run") else "sent"
+        print(f"core sweeps: {sum(r['selected'] for r in core)}/{sum(r['available'] for r in core)} rungs {verb}")
+        for r in core:
+            q = "" if s.get("dry_run") else f", {r['quoted']} quoted"
+            print(f"  {r['game']}  {r['pair']}  ({r['label']}): {r['selected']}/{r['available']} {verb}{q}")
     for r in res.rows[: args.top]:
         ev = f"{100 * r.ev:+.0f}%" if r.ev is not None else "  n/a"
         pay = f"{r.quoted_payout:.1f}x" if r.quoted_payout else "-"
-        print(f"  {ev:>6}  {pay:>8}  ratio {r.ratio or 0:.2f}  {r.legs}")
+        print(f"  {ev:>6}  {pay:>8}  ratio {r.ratio or 0:.2f}  [{r.pool}]  {r.legs}")
     for e in res.coverage.get("errors", []):
         print("COVERAGE ERROR:", e)
     return 2 if res.status == "coverage_error" else 0

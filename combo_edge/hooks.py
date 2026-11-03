@@ -30,7 +30,7 @@ def exploration_and_feed(uni: Universe, st: RuntimeSettings, db: Database, block
     from combo_edge.learning.exploration import exploration_candidates, feed_candidates
 
     out = feed_candidates(db, uni)
-    if st.explore_split()[0] > 0:
+    if st.explore_share > 0:
         out += exploration_candidates(uni, st, blocked)
     return out
 

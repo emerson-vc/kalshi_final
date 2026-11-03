@@ -15,6 +15,18 @@
     <div class="sub">run #{{ s.id }} · {{ s.finished }} · <a href="/health#coverage">report</a></div></div>
 </div>
 {% if not s.coverage_ok %}<div class="banner critical section">{% for e in s.coverage_errors %}<div>{{ e }}</div>{% endfor %}</div>{% endif %}
+{% if s.core %}
+<details class="card section" open>
+  <summary><b>Core sweeps</b> · your proven patterns (config/core.yaml), every rung for every player and team.
+    {% set tot = s.core|sum(attribute='available') %}{% set sel = s.core|sum(attribute='selected') %}{{ sel }}/{{ tot }} rungs {{ 'planned' if s.dry_run else 'sent' }} this run{% if not s.dry_run %} · {{ s.core|sum(attribute='quoted') }} quoted{% endif %}.
+    Rungs quoted in the last few hours rotate to the back, so repeated runs cover the rest.</summary>
+  <div class="tablewrap" style="margin-top:10px"><table><thead><tr><th>Game</th><th>Sweep</th><th class="num">Rungs</th><th class="num">{{ 'Planned' if s.dry_run else 'Sent' }}</th><th class="num">Quoted</th><th>Pairs ({{ 'planned' if s.dry_run else 'sent' }}/rungs)</th></tr></thead><tbody>
+  {% for g in s.core %}<tr><td>{{ g.game }}</td><td>{{ g.label }}</td><td class="num">{{ g.available }}</td><td class="num">{{ g.selected }}</td>
+    <td class="num">{{ '—' if s.dry_run else g.quoted }}</td>
+    <td><small>{% for p in g.pairs %}{{ p.pair }} {{ p.selected }}/{{ p.available }}{% if not loop.last %} · {% endif %}{% endfor %}</small></td></tr>{% endfor %}
+  </tbody></table></div>
+</details>
+{% endif %}
 {% endif %}
 
 <div class="card section">

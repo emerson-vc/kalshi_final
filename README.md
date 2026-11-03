@@ -168,19 +168,29 @@ uv run combo-edge nflverse-sync | fit | exploration-report
    into legs, including full threshold ladders and extremes. Leg liquidity is never used as a filter.
 2. **Candidates.** Eight template families of correlated same-game pairs, plus exploration strata
    (leg-type pair × same-team/opponent/game).
-3. **Fair price.**
+3. **Core sweeps** ([config/core.yaml](config/core.yaml)). These are your proven patterns:
+   - QB 3+/4+/5+ pass TD × own team o17.5–31.5
+   - WR/TE 2+/3+ TD × own team total
+   - QB 275–325+ yds × own WR/TE 100–190+ rec yds
+   - Team ML × 1H lead
+
+   They get 50% of each run's RFQ budget, round-robin across every player and team. Rungs quoted in the
+   last 6 hours go to the back. Combos Kalshi rejects as implied (e.g. 4+ pass TD with o21.5) are learned
+   and skipped. The split (50% core / 25% best-ranked / 15% free / 10% exploration) is editable on the
+   Learning tab.
+4. **Fair price.**
    - Ladder-consistent leg probabilities from the Kalshi books.
    - A drive-based joint simulator fit to the team-total, spread and total ladders, with player shares
      from nflverse.
    - A t-copula (df 4) prior anchored on your finds.
    - Blended into a fair price with a lower bound.
-4. **Budget and probe.**
+5. **Budget and probe.**
    - The local combo index (ours, the feed, previous runs) is checked before any `POST
      /multivariate_event_collections/…`. At most 500 new combos per run, and 5,000/week minus a 300
      reserve. Every POST is counted.
    - Each RFQ runs at your stake (`target_cost_dollars`, fee-inclusive). Quotes arrive over the websocket.
    - The execution decision runs **while the RFQ is still open**, then the RFQ is cancelled.
-5. **Learning.**
+6. **Learning.**
    - Labels: edge = fair × quoted payout − 1.
    - A maker model (scikit-learn HistGradientBoosting), retrained every run.
    - A Thompson bandit over strata, with auto-promotion of pair types that pay.
