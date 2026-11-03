@@ -107,6 +107,16 @@ def pick_collection(collections: list[dict[str, Any]], preferred: str) -> tuple[
     return None, [f"no open collection contains NFL events (wanted {preferred})"]
 
 
+def is_excluded_leg(leg: Leg) -> bool:
+    """Legs never used in any combo: game win margin TIE."""
+    return leg.kind == "win_margin" and leg.outcome == "TIE"
+
+
+def signature_has_excluded_leg(signature: str) -> bool:
+    """Same rule on a stored leg signature ("TICKER:side|..."), for combos saved before the rule existed."""
+    return any(t.split(":")[0].startswith("KXNFLWINMARGIN-") and t.split(":")[0].endswith("-TIE") for t in signature.split("|"))
+
+
 async def build_universe(
     api: KalshiAPI,
     collection_ticker: str,
@@ -176,6 +186,9 @@ async def build_universe(
             uni.game_volume[code] = uni.game_volume.get(code, 0.0) + (leg.volume or 0.0)
             if reason is not None:
                 cov.add_unparsed(leg.series, leg.ticker, reason)
+                continue
+            if is_excluded_leg(leg):
+                cov.excluded["win_margin_tie"] += 1
                 continue
             uni.legs[leg.ticker] = leg
             uni.legs_by_game[code].append(leg)

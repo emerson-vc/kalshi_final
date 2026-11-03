@@ -74,7 +74,12 @@ def add_to_panel(db: Database, env: str, rows: list[Any], kickoffs: dict[str, fl
 
 
 def due_slots(db: Database, env: str, now: float | None = None) -> tuple[list[dict[str, Any]], int]:
+    from combo_edge.universe import signature_has_excluded_leg
+
     now = now or timeutil.now()
+    for p in db.fetchall("SELECT combo_ticker, signature FROM requote_panel WHERE env=:e AND active=1", {"e": env}):
+        if signature_has_excluded_leg(p["signature"] or ""):
+            db.update(S.requote_panel, {"combo_ticker": p["combo_ticker"]}, {"active": 0, "reason": "excluded leg (win margin TIE)"})
     rows = db.fetchall(
         "SELECT s.combo_ticker, s.offset_h, s.due_at, p.signature, p.kickoff FROM requote_slots s JOIN requote_panel p ON p.combo_ticker = s.combo_ticker "
         "WHERE p.env=:e AND p.active=1 AND s.status='pending' AND s.due_at <= :n ORDER BY s.due_at",

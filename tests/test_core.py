@@ -80,3 +80,29 @@ async def test_dry_run_sweeps_every_core_rung(mock_exchange) -> None:  # type: i
     assert "Sam Darnold 4+ pass td + SEA team o24.5" in core_legs
     assert "Sam Darnold 4+ pass td + SEA team o28.5" in core_legs
     assert any(r["pair"].startswith("AJ Barner") for r in core if r["sweep"] == "rec_td_x_team_total")  # a TE
+
+
+async def test_win_margin_tie_is_never_a_leg(mock_exchange) -> None:  # type: ignore[no-untyped-def]
+    import copy
+
+    from combo_edge import timeutil
+    from combo_edge.requote import due_slots
+    from combo_edge.storage import schema as S
+
+    base = next(m for t, m in mock_exchange.markets.items() if t.startswith("KXNFLWINMARGIN-26NOV02CHISEA-"))
+    tie = copy.deepcopy(base)
+    tie.update(ticker="KXNFLWINMARGIN-26NOV02CHISEA-TIE", yes_sub_title="Tie", custom_strike={"Winning Margin": "Tie"})
+    mock_exchange.markets[tie["ticker"]] = tie
+    db = default_db()
+    res = await run_scan(ScanRequest(env="mock", dry_run=True, rfq_budget=1000), db=db, hooks=default_hooks())
+    assert res.coverage["excluded"].get("win_margin_tie") == 1
+    assert db.scalar("SELECT COUNT(*) FROM candidates WHERE legs LIKE '%WINMARGIN-26NOV02CHISEA-TIE%'") == 0
+    # a TIE combo saved on the re-quote panel before the rule existed is retired, not re-quoted
+    sig = "KXNFLRSHYDS-26NOV02CHISEA-SEAZCHARBONNET26-90:no|KXNFLWINMARGIN-26NOV02CHISEA-TIE:yes"
+    now = timeutil.now()
+    db.insert(S.requote_panel, {"combo_ticker": "KXMVETIE", "env": "mock", "signature": sig, "game_code": "26NOV02CHISEA",
+                                "kickoff": now + 86400, "added_at": now, "reason": "top_pick", "active": 1})
+    db.insert(S.requote_slots, {"combo_ticker": "KXMVETIE", "offset_h": 24, "due_at": now - 60, "status": "pending"})
+    due, _ = due_slots(db, "mock", now)
+    assert not [d for d in due if d["combo_ticker"] == "KXMVETIE"]
+    assert db.scalar("SELECT active FROM requote_panel WHERE combo_ticker='KXMVETIE'") == 0
