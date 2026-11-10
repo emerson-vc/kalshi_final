@@ -65,6 +65,7 @@
           <span class="fam">{{ r.family }} · {{ r.fair_source }}
             {% if r.existed %}<span class="chip free" title="Someone else created it: no creation budget spent">existing</span>{% endif %}
             {% if r.pool == 'explore' %}<span class="chip">explore</span>{% endif %}
+            {% if r.id_quote %}<span class="chip good" title="Re-quoted under your ID. Anonymous quote was {{ r.anon_payout|x if r.anon_payout else '—' }}">your ID{% if r.anon_payout %} · anon {{ r.anon_payout|x }}{% endif %}</span>{% endif %}
             {% if r.unpriced %}<span class="chip warn">unpriced leg</span>{% endif %}
             {% if r.execution %}<span class="chip {{ 'good' if r.execution.decision in ('accept','paper_fill') else '' }}">{{ r.execution.decision }}</span>{% endif %}
           </span></td>
