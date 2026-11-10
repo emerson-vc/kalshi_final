@@ -39,6 +39,17 @@ class QuoteObs:
     recv_ts: float
     source: str  # ws | rest | recorder
     target_cost: float | None = None
+    status: str | None = None  # REST only: open | accepted | confirmed | executed | cancelled
+
+    @property
+    def live(self) -> bool:
+        """False for a quote the exchange cancelled (a maker's replaced quote shows up this way over REST)."""
+        return (self.status or "open") != "cancelled"
+
+    @property
+    def order_ts(self) -> float:
+        """When the maker sent it. REST rows all share one local receive time, so order by created_ts."""
+        return self.created_ts if self.created_ts is not None else self.recv_ts
 
     @classmethod
     def from_ws(cls, msg: dict[str, Any], recv_ts: float) -> "QuoteObs":
@@ -70,6 +81,7 @@ class QuoteObs:
             recv_ts=recv_ts,
             source="rest",
             target_cost=pricing.parse_dollars(q.get("rfq_target_cost_dollars")),
+            status=str(q.get("status") or "") or None,
         )
 
     @property
@@ -142,11 +154,26 @@ class RfqWatch:
         self.quotes.append(q)
         self.changed.set()
 
+    def add_rest(self, q: QuoteObs) -> bool:
+        """Merge a REST row. Updates the status of a quote already seen on the websocket; True if new."""
+        for seen in self.quotes:
+            if seen.quote_id and seen.quote_id == q.quote_id:
+                if q.status:
+                    seen.status = q.status
+                if seen.created_ts is None:
+                    seen.created_ts = q.created_ts
+                return False
+        self.add(q)
+        return True
+
     def latest_by_maker(self) -> dict[str, QuoteObs]:
+        """Each maker's current quote. A maker's new quote replaces its previous one, and Kalshi marks the old
+        one cancelled. Order by when the maker sent it, never by when we received it: GET /communications/quotes
+        returns every quote best price first, cancelled ones included, all with the same receive time."""
         out: dict[str, QuoteObs] = {}
-        for q in sorted(self.quotes, key=lambda x: x.recv_ts):
-            out[q.maker_id or q.quote_id] = q  # a maker's new quote replaces its previous one
-        return out
+        for q in sorted(self.quotes, key=lambda x: (x.order_ts, x.recv_ts)):
+            out[q.maker_id or q.quote_id] = q
+        return {k: q for k, q in out.items() if q.live}
 
     def first_quote_ms(self) -> float | None:
         if not self.quotes:
