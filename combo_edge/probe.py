@@ -46,6 +46,7 @@ class ProbeRequest:
     offset_h: float | None = None
     feed_demand: int | None = None
     allow_execution: bool = True
+    obscure_creator_id: bool = True  # False only for the Shop button's "under your ID" comparison round
 
 
 @dataclass
@@ -150,7 +151,7 @@ class ProbeEngine:
     async def _create(self, req: ProbeRequest, res: ProbeResult) -> str | None:
         for attempt in (1, 2):
             try:
-                rfq_id = await self.api.create_rfq(req.combo_ticker, req.target_cost)
+                rfq_id = await self.api.create_rfq(req.combo_ticker, req.target_cost, req.obscure_creator_id)
                 self.on_progress("rfqs_sent", 1)
                 return rfq_id
             except Conflict:

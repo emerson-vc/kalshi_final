@@ -111,5 +111,8 @@ def test_no_forbidden_endpoints_anywhere() -> None:
 def test_rfq_body_never_rests_remainder() -> None:
     src = (PKG / "kalshi" / "api.py").read_text()
     assert '"rest_remainder": False' in src
-    assert '"obscure_creator_id": True' in src
+    # Scans stay anonymous: hidden by default everywhere; only the Shop button's comparison round shows your ID.
+    assert "obscure_creator_id: bool = True" in src
+    assert "obscure_creator_id: bool = True" in (PKG / "probe.py").read_text()
+    assert "obscure_creator_id" not in (PKG / "scan.py").read_text()
     assert "replace_existing" not in src

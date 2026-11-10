@@ -29,12 +29,14 @@
   <div class="grid g4">
     <div class="tile"><div class="label">Best quoted payout</div><div class="value">{{ shop.best_payout|x if shop.best_payout else '—' }}</div>
       <div class="sub">taker YES {{ '%.4f'|format(shop.best_price) if shop.best_price else '—' }} · {{ shop.quoted }}/{{ shop.rounds }} rounds quoted</div></div>
+    <div class="tile"><div class="label">Anonymous vs your ID</div><div class="value">{{ shop.best_payout_anonymous|x if shop.best_payout_anonymous else '—' }} / {{ shop.best_payout_your_id|x if shop.best_payout_your_id else '—' }}</div>
+      <div class="sub">best payout when makers can't see you / can</div></div>
     <div class="tile"><div class="label">Spread between rounds</div><div class="value">{{ '%.4f'|format(shop.spread_between_rounds) if shop.spread_between_rounds is not none else '—' }}</div>
       <div class="sub">best price, max − min across rounds</div></div>
     <div class="tile"><div class="label">Spread between makers</div><div class="value">{{ '%.4f'|format(shop.spread_between_makers) if shop.spread_between_makers is not none else '—' }}</div>
       <div class="sub">all quotes, max − min</div></div>
     <div class="tile"><div class="label">Per round</div>
-      <div class="sub">{% for r in shop.per_round %}{{ loop.index }}: {{ r.payout|x if r.payout else r.outcome }} ({{ r.makers or 0 }} makers){% if not loop.last %}<br>{% endif %}{% endfor %}</div></div>
+      <div class="sub">{% for r in shop.per_round %}{{ loop.index }}: {{ r.payout|x if r.payout else r.outcome }} ({{ r.makers or 0 }} makers{{ ', your ID' if r.id_shown else ', anonymous' }}){% if not loop.last %}<br>{% endif %}{% endfor %}</div></div>
   </div>
 </div>
 {% endif %}
