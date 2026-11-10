@@ -526,7 +526,7 @@ class MockExchange:
         r["status"] = "closed"
         self.open_rfq_by_ticker.pop(r["market_ticker"], None)
         for q in self.quotes.values():
-            if q["rfq_id"] == r["id"] and q["status"] == "open":
+            if q["rfq_id"] == r["id"] and q["status"] in ("open", "accepted"):  # deleting before the maker confirms kills the accept
                 q["status"] = "cancelled"
         self._broadcast("rfq_deleted", {"id": r["id"], "creator_id": self.comm_id, "market_ticker": r["market_ticker"], "deleted_ts": timeutil.iso(time.time())})
 

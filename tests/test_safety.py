@@ -111,7 +111,8 @@ def test_no_forbidden_endpoints_anywhere() -> None:
 def test_rfq_body_never_rests_remainder() -> None:
     src = (PKG / "kalshi" / "api.py").read_text()
     assert '"rest_remainder": False' in src
-    # Scans stay anonymous: hidden by default everywhere; only the Shop button's comparison round shows your ID.
+    # Hidden by default everywhere. Your ID is shown only by the Shop button's comparison round and by the
+    # top-N re-quote in id_requote.py (capped by id_requote_top); scan.py itself never sets the flag.
     assert "obscure_creator_id: bool = True" in src
     assert "obscure_creator_id: bool = True" in (PKG / "probe.py").read_text()
     assert "obscure_creator_id" not in (PKG / "scan.py").read_text()

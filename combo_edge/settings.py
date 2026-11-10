@@ -194,6 +194,8 @@ class RuntimeSettings(BaseModel):
     # --- shopping ---
     shop_rounds: int = 3
     shop_gap_s: float = 4.0
+    # --- your ID: makers quote anonymous RFQs much worse; re-quote the best N of each scan under your ID (0 = off)
+    id_requote_top: int = 30
     # --- schedulers ---
     fullscan_enabled: bool = False
     fullscan_check_min: int = 30

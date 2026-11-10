@@ -461,6 +461,32 @@ async def run_scan(
             c = by_sig.get(r.request.signature)
             if c is not None and r.rfq_id:
                 rows.append(build_row(r, c, st, ev_ticker.get(r.request.combo_ticker)))
+        id_results: list[ProbeResult] = []
+        if st.id_requote_top > 0 and not abort.is_set():
+            from combo_edge.id_requote import id_requote_request, pick_for_id_requote
+
+            picks = pick_for_id_requote(results, by_sig, st.id_requote_top)
+            progress.phase = "id_requote"
+
+            async def again(r0: ProbeResult, c: Candidate) -> ProbeResult | None:
+                if abort.is_set():
+                    return None
+                r = await engine.probe(id_requote_request(r0, c, stake, window))
+                progress.bump("id_requotes")
+                return r
+
+            id_results = [r for r in await asyncio.gather(*(again(r0, c) for r0, c in picks)) if r is not None]
+            anon_pay = {r0.request.signature: r0.combo_payout for r0, _ in picks}
+            replaced = {r.request.signature for r in id_results if r.rfq_id and r.quoted}
+            rows = [row for row in rows if row.signature not in replaced]
+            for r in id_results:
+                c = by_sig.get(r.request.signature)
+                if c is not None and r.rfq_id and r.quoted:
+                    row = build_row(r, c, st, ev_ticker.get(r.request.combo_ticker))
+                    row.id_quote, row.anon_payout = True, anon_pay.get(c.signature)
+                    rows.append(row)
+            better = sum(1 for r in id_results if r.combo_payout and anon_pay.get(r.request.signature) and r.combo_payout > anon_pay[r.request.signature] * 1.05)
+            progress.note(f"your-ID re-quotes: {len(replaced)}/{len(picks)} quoted, {better} better than anonymous")
         rows = rank(rows)
         for hook in hooks.after_probes:
             res = hook(db=db, env=env, settings=st, run_id=run_id, universe=uni, results=results, rows=rows,
@@ -472,6 +498,7 @@ async def run_scan(
         elif not uni.coverage.ok:
             status = "coverage_error"
         summary = _summary(results, resolver, clients.limiter)
+        summary["id_requotes"] = {"sent": sum(1 for r in id_results if r.rfq_id), "quoted": sum(1 for r in id_results if r.quoted)}
         summary["core"] = core_coverage(cands, sweeps, chosen_sigs, {r.request.signature for r in results if r.quoted}, ctx=sel.core_ctx)
         progress.note(f"done: {summary['quoted']}/{summary['rfqs_sent']} RFQs quoted"
                       + (f", fill rate {summary['fill_rate']:.0%}" if summary.get("fill_rate") is not None else ""))

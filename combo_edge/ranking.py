@@ -52,6 +52,8 @@ class ResultRow:
     execution: dict[str, Any] | None = None
     warnings: list[str] = field(default_factory=list)
     expected_payout: float | None = None  # prescore's expected quote: shown/filtered on before a quote exists
+    id_quote: bool = False  # this row's quote came from an RFQ under your ID (see id_requote.py)
+    anon_payout: float | None = None  # the anonymous quote it replaced
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
