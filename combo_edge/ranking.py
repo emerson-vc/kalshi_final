@@ -6,6 +6,7 @@ prior/blended fair payout, EV% = fair x payout - 1, suggested stake, hours to ki
 
 from __future__ import annotations
 
+import re
 from dataclasses import asdict, dataclass, field
 from typing import Any
 
@@ -50,6 +51,7 @@ class ResultRow:
     unpriced: bool = False
     execution: dict[str, Any] | None = None
     warnings: list[str] = field(default_factory=list)
+    expected_payout: float | None = None  # prescore's expected quote: shown/filtered on before a quote exists
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -104,8 +106,41 @@ def build_row(res: ProbeResult, cand: Candidate, settings: RuntimeSettings, even
         link=market_link(settings.market_link_template, res.request.combo_ticker, event_ticker),
         unpriced=cand.unpriced,
         execution=res.execution,
+        expected_payout=cand.expected_payout,
     )
 
 
 def rank(rows: list[ResultRow]) -> list[ResultRow]:
     return sorted(rows, key=lambda r: (r.ev is None, -(r.ev or 0.0)))
+
+
+_MAX_PAYOUT = re.compile(r"^\s*(?:<=?|≤)?\s*(\d+(?:\.\d+)?)\s*x?\s*$", re.IGNORECASE)
+
+
+def parse_max_payout(text: str | float | None) -> float | None:
+    """'40', '40x', '<40x', '<= 100', '100X' -> 40.0 / 100.0; blank -> None (no filter).
+    Raises ValueError for anything else. Mirrored in web/static/app.js."""
+    if text is None:
+        return None
+    if isinstance(text, (int, float)):
+        return float(text)
+    if not text.strip():
+        return None
+    m = _MAX_PAYOUT.match(text)
+    if not m or float(m.group(1)) <= 0:
+        raise ValueError(f"max payout: expected a number like 40, 40x or <40x, got {text!r}")
+    return float(m.group(1))
+
+
+def row_payout(row: Any) -> float | None:
+    """Quoted payout, or the expected payout for a row with no quote yet."""
+    get = row.get if isinstance(row, dict) else lambda k: getattr(row, k, None)
+    q = get("quoted_payout")
+    return q if q is not None else get("expected_payout")
+
+
+def filter_max_payout(rows: list[Any], max_payout: float | None) -> list[Any]:
+    """Hide rows paying more than ``max_payout``; rows with no payout at all stay visible."""
+    if max_payout is None:
+        return list(rows)
+    return [r for r in rows if (p := row_payout(r)) is None or p <= max_payout + 1e-9]

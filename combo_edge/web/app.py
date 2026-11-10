@@ -29,6 +29,7 @@ EDITABLE = {
     "daily_loss_limit": float, "weekly_loss_limit": float, "max_bets_per_day": int, "creation_reserve": int,
     "stack_warn": int, "max_open_rfqs": int, "stratum_min_quotes": int,
     "core_share": float, "exploit_share": float, "free_share": float, "explore_share": float,
+    "rank_payout_min": float, "rank_payout_max": float,
 }
 
 
@@ -193,7 +194,7 @@ def create_app(db: Database, env: str | None = None) -> FastAPI:
     async def kill_switch() -> RedirectResponse:
         execution.kill(db, "kill switch pressed in the dashboard")
         state.abort.set()
-        db.settings_set({"requote_enabled": False, "fullscan_enabled": False})
+        db.settings_set({"requote_enabled": False, "fullscan_enabled": False, "fullscan_early_week": False})
         try:
             from combo_edge.context import make_clients
             from combo_edge.probe import cleanup_our_open_rfqs
@@ -262,10 +263,12 @@ def create_app(db: Database, env: str | None = None) -> FastAPI:
                 launchd.set_agent("requote", enable)
             elif what == "recorder":
                 launchd.set_agent("recorder", enable)
-            elif what == "fullscan":
-                db.settings_set({"fullscan_enabled": enable})
-                launchd.set_agent("fullscan", enable)
-            state.note("ok", f"{what}: {'ON' if enable else 'OFF'}")
+            elif what in ("fullscan", "fullscan_early"):
+                db.settings_set({"fullscan_enabled" if what == "fullscan" else "fullscan_early_week": enable})
+                st = state.settings()
+                # one launchd agent serves both modes: keep it while either is on
+                launchd.set_agent("fullscan", st.fullscan_enabled or st.fullscan_early_week)
+            state.note("ok", f"{what.replace('_', ' ')}: {'ON' if enable else 'OFF'}")
         except Exception as exc:  # noqa: BLE001
             state.note("error", f"{what} toggle failed: {exc}")
         return RedirectResponse("/health", 303)

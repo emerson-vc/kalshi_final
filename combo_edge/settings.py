@@ -148,6 +148,17 @@ class RuntimeSettings(BaseModel):
     free_share: float = Field(0.15, ge=0.0, le=1.0)
     explore_share: float = Field(0.10, ge=0.0, le=1.0)
     core_requote_after_h: float = 6.0  # core combos quoted this recently go to the back of the next run's queue
+    core_requote_move: float = 0.03  # ...unless a leg's price moved more than this (3c) since that quote
+    # Payout band for the core, exploit and free pools (expected payout, or the leg-payout product). Combos
+    # outside it can only be sent by the explore and unpriced pools.
+    rank_payout_min: float = Field(8.0, ge=1.0)
+    rank_payout_max: float = Field(50.0, ge=1.0)
+    # Families that only the explore pool may send until promoted or until the bandit shows a positive
+    # posterior over at least ``explore_only_release_quotes`` quotes. All no_* families and exploration
+    # strata pairs (explore:*) are explore-only too.
+    explore_only_families: list[str] = Field(default_factory=lambda: ["rb_x_ml_spread", "qb_x_game_total"])
+    explore_only_release_quotes: int = 30
+    bandit_min_clv_obs: int = 10  # arms with fewer CLV observations get half the model-EV reward
     stratum_target_quotes: int = 30
     promotion_min_quotes: int = 30
     promotion_min_games: int = 3
@@ -155,7 +166,7 @@ class RuntimeSettings(BaseModel):
     promotion_prob: float = 0.90
     maker_half_life_days: float = 7.0
     # --- re-quote panel ---
-    requote_enabled: bool = False
+    requote_enabled: bool = True  # re-RFQs panel combos only: never creates combos, never bets
     requote_offsets_h: list[float] = Field(default_factory=lambda: [144, 96, 72, 48, 24, 12, 6, 1])
     panel_max: int = 150
     panel_top_k: int = 20
@@ -186,12 +197,18 @@ class RuntimeSettings(BaseModel):
     # --- schedulers ---
     fullscan_enabled: bool = False
     fullscan_check_min: int = 30
+    # early-week sweep: at most once a day, Tue-Thu 9am-9pm local, only when player props are open
+    fullscan_early_week: bool = False
+    fullscan_early_days: list[str] = Field(default_factory=lambda: ["Tue", "Wed", "Thu"])
+    fullscan_early_hours: tuple[int, int] = (9, 21)
     # --- misc ---
     market_link_template: str = "https://kalshi.com/markets/{series_lower}/{event_lower}"
 
     @model_validator(mode="after")
     def _shares_sum_to_one(self) -> "RuntimeSettings":
         total = self.core_share + self.exploit_share + self.free_share + self.explore_share
+        if self.rank_payout_min >= self.rank_payout_max:
+            raise ValueError("payout band: min must be below max")
         if abs(total - 1.0) > 0.011:
             raise ValueError(f"core + exploit + free + explore shares must add up to 100% (got {total:.0%})")
         return self

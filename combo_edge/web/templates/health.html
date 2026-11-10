@@ -28,7 +28,10 @@
 
 <div class="grid g3 section">
   <div class="card"><header><h2>Auto re-quote panel</h2><span class="status {{ 'good' if hl.requote_enabled else '' }}">{{ 'ON' if hl.requote_enabled else 'OFF' }}</span></header>
-    <p class="muted">launchd re-RFQs the fixed panel at 6d/4d/3d/2d/1d/12h/6h/1h before kickoff. Never creates combos, never bets.</p>
+    <p class="muted">launchd re-RFQs the fixed panel at 6d/4d/3d/2d/1d/12h/6h/1h before kickoff. Never creates combos, never bets.
+      This is where CLV (the learning signal) comes from.</p>
+    {% if hl.requote_enabled and not hl.agents.get('requote') %}<div class="flash warn">On, but the launchd agent isn't installed, so nothing runs yet.
+      <form method="post" action="/toggle/requote" style="display:inline"><input type="hidden" name="on" value="1"><button class="secondary" type="submit">Install agent</button></form></div>{% endif %}
     <form method="post" action="/toggle/requote"><input type="hidden" name="on" value="{{ '0' if hl.requote_enabled else '1' }}"><button class="secondary" type="submit">Turn {{ 'off' if hl.requote_enabled else 'on' }}</button></form>
     {% if hl.requote_runs %}<div class="tablewrap" style="margin-top:10px;max-height:200px"><table><tbody>{% for r in hl.requote_runs %}
       <tr><td>{{ r.started_at|when_short }}</td><td>{{ r.status }}</td><td class="num">{{ r.summary.probed or 0 }} RFQs</td></tr>{% endfor %}</tbody></table></div>{% endif %}</div>
@@ -38,7 +41,10 @@
     <form method="post" action="/toggle/recorder"><input type="hidden" name="on" value="{{ '0' if hl.recorder.installed else '1' }}"><button class="secondary" type="submit">{{ 'Uninstall' if hl.recorder.installed else 'Install' }} launchd agent</button></form></div>
   <div class="card"><header><h2>Full-scan scheduler</h2><span class="status {{ 'good' if hl.fullscan_enabled else '' }}">{{ 'ON' if hl.fullscan_enabled else 'OFF' }}</span></header>
     <p class="muted">Optional heavy sweep when new prop markets open. Off by default.</p>
-    <form method="post" action="/toggle/fullscan"><input type="hidden" name="on" value="{{ '0' if hl.fullscan_enabled else '1' }}"><button class="secondary" type="submit">Turn {{ 'off' if hl.fullscan_enabled else 'on' }}</button></form></div>
+    <form method="post" action="/toggle/fullscan"><input type="hidden" name="on" value="{{ '0' if hl.fullscan_enabled else '1' }}"><button class="secondary" type="submit">Turn {{ 'off' if hl.fullscan_enabled else 'on' }}</button></form>
+    <h3 style="margin-top:12px">Early-week scan <span class="status {{ 'good' if hl.fullscan_early_week else '' }}">{{ 'ON' if hl.fullscan_early_week else 'OFF' }}</span></h3>
+    <p class="muted">One scan a day, Tue–Thu 9am–9pm, only when player props are open (props open ~4 days before kickoff).</p>
+    <form method="post" action="/toggle/fullscan_early"><input type="hidden" name="on" value="{{ '0' if hl.fullscan_early_week else '1' }}"><button class="{{ 'secondary' if hl.fullscan_early_week else '' }}" type="submit">{{ 'Turn off' if hl.fullscan_early_week else 'Enable early-week scan' }}</button></form></div>
 </div>
 
 <div class="card section" id="coverage">

@@ -9,6 +9,11 @@ For each game with legs:
 4. Each leg -> a simulated stat. Its target probability blends Kalshi and the raw model by liquidity.
    Events are defined in rank space (u >= 1 - p_target), so every leg's marginal equals its target and the
    simulator supplies the dependence. Joints for all legs of a game come from one matrix product.
+   Exception: when a tail leg's target is more than 1.5x the simulator's own marginal, the rank event
+   would pull in many simulated games where the stat did NOT happen, diluting (or inventing) dependence.
+   Those pairs use P_sim(other | tail stat happened) x target instead.
+5. History calibration (``learning/calibration.py``) shifts each family's YES/YES conditional by the
+   log-odds gap to nflverse (``family_shift``) and widens its band by the residual (``family_u``).
 
 Legs the simulator doesn't cover (first TD scorer, fantasy points, ...) return None, and prescore falls
 back to the copula prior for those pairs.
@@ -19,6 +24,7 @@ from __future__ import annotations
 import logging
 import re
 import time
+import zlib
 from dataclasses import dataclass, field, replace
 from typing import Any
 
@@ -105,7 +111,7 @@ class GameModel:
             x = self.stat(m, key)
             if x is None:
                 return None
-            rng = np.random.default_rng(abs(hash((self.game_code, key, m))) % (2**32))
+            rng = np.random.default_rng(zlib.crc32(repr((self.game_code, key, m)).encode()))  # stable across processes
             cache[key] = rank_uniform(x, rng)
         return cache[key]
 
@@ -128,6 +134,8 @@ class FairModel:
         self.u_struct = 0.15
         self._flag_by_stat: dict[tuple[Any, ...], tuple[float, dict[str, Any]]] = {}
         self.family_u: dict[str, float] = {}  # extra band per family from truth-model calibration (Phase 2.5)
+        self.family_shift: dict[str, float] = {}  # log-odds shift of P(B|A) per family toward nflverse history
+        self.tail_remap_ratio = 1.5
 
     # ------------------------------------------------------------------ build
     def _team_spec(self, team: str, legs: list[Leg], sigma: float) -> TeamSpec:
@@ -280,7 +288,11 @@ class FairModel:
             if not usable:
                 continue
             pos = {t: j for j, (t, _, _) in enumerate(usable)}
-            joints = []
+            # tail legs whose target is far above the simulator's own marginal: condition on the raw stat
+            inflated = [j for j, (t, key, p_b) in enumerate(usable)
+                        if (mp := self._leg(legs[t])[0]) is not None and 0 < mp and p_b > self.tail_remap_ratio * mp]
+            ipos = {j: r for r, j in enumerate(inflated)}
+            joints, tails = [], []
             for m in range(len(gm.members)):
                 ev = np.zeros((len(usable), gm.n), dtype=np.float32)
                 for j, (_, key, p_b) in enumerate(usable):
@@ -288,16 +300,33 @@ class FairModel:
                     if u is not None:
                         ev[j] = u >= 1.0 - p_b
                 joints.append((ev @ ev.T) / gm.n)
+                if inflated:
+                    raw = np.zeros((len(inflated), gm.n), dtype=np.float32)
+                    for r, j in enumerate(inflated):
+                        t, key, _ = usable[j]
+                        x = gm.stat(m, key)
+                        if x is not None:
+                            raw[r] = x > event_threshold(legs[t], key)
+                    hits = raw.sum(axis=1, keepdims=True)
+                    tails.append(np.where(hits > 0, (raw @ ev.T) / np.maximum(hits, 1.0), 0.0))  # P_sim(other | tail stat)
             n = gm.n
+            shift_of = self.family_shift
             for i in idxs:
                 (a, b) = cands[i].legs
                 if a.leg.ticker not in pos or b.leg.ticker not in pos:
                     continue
                 ja, jb = pos[a.leg.ticker], pos[b.leg.ticker]
                 pa, pb = usable[ja][2], usable[jb][2]
+                tail = min((j for j in (ja, jb) if j in ipos), key=lambda j: usable[j][2], default=None)
+                other = jb if tail == ja else ja
+                shift = shift_of.get(cands[i].family, 0.0) if a.side == "yes" and b.side == "yes" else 0.0
                 vals = []
-                for S in joints:
-                    s = float(S[ja, jb])
+                for mi, S in enumerate(joints):
+                    s = min(float(S[ja, jb]), pa, pb)  # rank events can overshoot min(pa, pb) by MC noise
+                    if tail is not None:
+                        s = min(usable[tail][2] * float(tails[mi][ipos[tail], other]), pa, pb)
+                    if shift:
+                        s = min(pa * conditional_shift(s / pa, shift), pb)
                     if a.side == "yes" and b.side == "yes":
                         v = s
                     elif a.side == "yes":
@@ -317,6 +346,22 @@ class FairModel:
                 out[i] = (fair, lower)
         self.timings["joint_s"] = self.timings.get("joint_s", 0.0) + time.time() - t0
         return out
+
+
+def conditional_shift(cond: float, shift: float) -> float:
+    """Move a conditional probability by ``shift`` in log-odds."""
+    c = min(max(cond, 1e-6), 1 - 1e-6)
+    return float(1.0 / (1.0 + np.exp(-(np.log(c / (1 - c)) + shift))))
+
+
+def tail_joint(other_event: np.ndarray, tail_raw: np.ndarray, tail_target: float) -> float:
+    """P(tail and other) = P_sim(other | the tail stat actually happened in the simulation) x tail target.
+
+    Used instead of the rank-space event when the tail's target is far above the simulator's marginal."""
+    hit = np.asarray(tail_raw, dtype=bool)
+    if not hit.any():
+        return 0.0
+    return float(tail_target * np.asarray(other_event, dtype=float)[hit].mean())
 
 
 def build_fair_model(universe: Universe) -> FairModel | None:

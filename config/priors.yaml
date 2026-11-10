@@ -19,7 +19,11 @@ defaults:
   df: 4
   rho: 0.35            # used by families without anchors
   expected_ratio: 1.0  # makers quote ~ the product of the leg payouts (your finds cluster near 1.0)
-  max_expected_payout: 200      # prior cap: makers rarely sell penny-on-penny combos at 1c x 1c
+  max_expected_payout: 60       # prior cap: makers rarely sell penny-on-penny combos at 1c x 1c
+  # Tail extrapolation guards (the model's edge must not keep growing as both legs get longer):
+  max_lift: 6                   # fair_joint <= max_lift * P(A) * P(B)
+  payout_uncertainty_per_doubling: 0.10  # fair_lower widens by 10% of fair per doubling of payout...
+  payout_uncertainty_from: 20            # ...above 20x
   uncertainty_per_unquoted_leg: 0.20  # extra band for a leg priced from its ladder, not a two-sided mid
   uncertainty_per_efold_from_anchor: 0.12  # anchors are only trustworthy near their own marginals
   uncertainty_anchored: 0.15    # fair_lower = fair * (1 - u), feeds the execution confidence gate

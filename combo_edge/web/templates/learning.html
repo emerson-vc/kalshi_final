@@ -13,13 +13,15 @@
 </div>
 
 <div class="card section">
-  <header><h2>RFQ budget split</h2><small>shares of each run's RFQ budget; must add up to 1.0</small></header>
+  <header><h2>RFQ budget split &amp; payout band</h2><small>shares of each run's RFQ budget (must add up to 1.0); core, best-ranked and free combos only send combos paying inside the band</small></header>
   <form method="post" action="/settings" class="fields">
     <input type="hidden" name="back" value="/learning">
     <label class="f">Core sweeps<input type="number" name="core_share" step="0.05" min="0" max="1" value="{{ st.core_share }}"></label>
     <label class="f">Best-ranked<input type="number" name="exploit_share" step="0.05" min="0" max="1" value="{{ st.exploit_share }}"></label>
     <label class="f">Free combos<input type="number" name="free_share" step="0.05" min="0" max="1" value="{{ st.free_share }}"></label>
     <label class="f">Exploration<input type="number" name="explore_share" step="0.05" min="0" max="1" value="{{ st.explore_share }}"></label>
+    <label class="f" title="Lowest expected payout the core, best-ranked and free pools will send">Band min (x)<input type="number" name="rank_payout_min" step="1" min="1" value="{{ st.rank_payout_min }}"></label>
+    <label class="f" title="Highest expected payout the core, best-ranked and free pools will send; longer combos only go out through exploration">Band max (x)<input type="number" name="rank_payout_max" step="1" min="2" value="{{ st.rank_payout_max }}"></label>
     <button class="secondary" type="submit">Save</button>
   </form>
 </div>

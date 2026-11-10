@@ -120,6 +120,11 @@ private key, with no `NAME=` lines. That private key was printed during the buil
   - The results table shows quoted payout, leg product, ratio, fair payout, EV (and EV at the lower
     bound), suggested stake, the gate outcome, and a **Shop** button. Shop sends 3 RFQs a few seconds
     apart and shows the best quote and the dispersion. It never buys.
+  - **Max payout** box above the table:
+    - Accepts `40`, `40x` or `<40x`, with quick buttons for <25x, <40x, <60x, <100x and All.
+    - Rows without a quote use the expected payout.
+    - Combines with the other filters, and is remembered in this browser.
+    - The CLI equivalent is `scan --max-payout 40`.
 - **My bets:**
   - Execution mode and the typed confirmation.
   - Bankroll and caps.
@@ -142,8 +147,8 @@ Toggles on Health, or `uv run combo-edge launchd install|uninstall|status <agent
 | Agent | When | What |
 |---|---|---|
 | `recorder` | 24/7 (KeepAlive) | Read-only public RFQ feed. Indexes other people's NFL combos (free tickers) and demand. |
-| `requote` | every 10 min | Re-RFQs the panel at 144/96/72/48/24/12/6/1 h before kickoff. Never creates combos, never bets. |
-| `fullscan` | every 30 min, **off by default** | Runs a scan when new player-prop markets open, or when the timing map says now is a good time. Execution follows the current mode. |
+| `requote` | every 10 min, **on by default** (install the agent from Health) | Re-RFQs the panel at 144/96/72/48/24/12/6/1 h before kickoff. Never creates combos, never bets. This is where CLV comes from. |
+| `fullscan` | every 30 min, **off by default** | Full-scan mode runs a scan when new player-prop markets open, or when the timing map says now is a good time. Early-week mode (its own Health button) runs at most one scan a day, Tue–Thu 9am–9pm, when props are open. Execution follows the current mode. |
 
 The agents run as `com.combo-edge.*` in `~/Library/LaunchAgents` and log to `data/logs/`. **They only
 run while the Mac is awake.**
@@ -174,23 +179,44 @@ uv run combo-edge nflverse-sync | fit | exploration-report
    - QB 275–325+ yds × own WR/TE 100–190+ rec yds
    - Team ML × 1H lead
 
-   They get 50% of each run's RFQ budget, round-robin across every player and team. Rungs quoted in the
-   last 6 hours go to the back. Combos Kalshi rejects as implied (e.g. 4+ pass TD with o21.5) are learned
-   and skipped. The split (50% core / 25% best-ranked / 15% free / 10% exploration) is editable on the
-   Learning tab.
-4. **Fair price.**
+   - QB 3+/4+ pass TD × own team total, main line ± 7 (40% of core). 5+ is explore-only.
+   - QB 275–325+ yds × own top-2 WR/TE 100–190+ rec yds (25%)
+   - Top-2 WR/TE 2+/3+ TD × own team total (20%). Receivers rank by their anytime-TD price.
+   - Team ML × 1H lead (15%)
+
+   They get 50% of each run's RFQ budget. A sweep's unused share flows to the next one. Within a sweep
+   it goes round-robin across players, rungs nearest the middle of the payout band first. A rung quoted
+   in the last 6 hours goes to the back, unless a leg has since moved more than 3¢. Combos Kalshi rejects
+   as implied (e.g. 4+ pass TD with o21.5) are learned and skipped.
+4. **Payout band.** The core, best-ranked and free pools only send combos whose expected payout is
+   8x–50x. Longer combos, and families that haven't proven themselves, go out only through exploration.
+   The unproven families are `rb_x_ml_spread`, `qb_x_game_total`, every `no_*` family and the
+   exploration strata pairs. They are released once promoted, or after 30 quotes with a positive bandit
+   posterior. The band and the split (50% core / 25% best-ranked / 15% free / 10% exploration) are
+   editable on the Learning tab.
+5. **Tail guards.** These stop the model's edge from growing as both legs get longer:
+   - Copula conditionals are capped at the family's strongest anchor.
+   - The fair joint is capped at 6× independence.
+   - The lower bound widens by 10% of fair per doubling of payout above 20x.
+   - The simulator draws each game's pass-TD share from a Beta, and its FGs give way to TDs on big days.
+     That matches nflverse: P(team o28.5 | QB 4+ pass TD) ≈ 0.92 at implied 22.5–27.5.
+   - The daily history calibration shifts each family's conditional toward nflverse.
+
+   `uv run python scripts/diagnose_selection.py` shows where a run's budget goes, by payout bucket and
+   family. It runs offline, on the recorded markets.
+6. **Fair price.**
    - Ladder-consistent leg probabilities from the Kalshi books.
    - A drive-based joint simulator fit to the team-total, spread and total ladders, with player shares
      from nflverse.
    - A t-copula (df 4) prior anchored on your finds.
    - Blended into a fair price with a lower bound.
-5. **Budget and probe.**
+7. **Budget and probe.**
    - The local combo index (ours, the feed, previous runs) is checked before any `POST
      /multivariate_event_collections/…`. At most 500 new combos per run, and 5,000/week minus a 300
      reserve. Every POST is counted.
    - Each RFQ runs at your stake (`target_cost_dollars`, fee-inclusive). Quotes arrive over the websocket.
    - The execution decision runs **while the RFQ is still open**, then the RFQ is cancelled.
-6. **Learning.**
+8. **Learning.**
    - Labels: edge = fair × quoted payout − 1.
    - A maker model (scikit-learn HistGradientBoosting), retrained every run.
    - A Thompson bandit over strata, with auto-promotion of pair types that pay.

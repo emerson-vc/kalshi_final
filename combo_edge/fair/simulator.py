@@ -2,10 +2,11 @@
 
 Per simulated game (vectorized over N sims):
   latent offense  Z_i = sqrt(rho)*G + sqrt(1-rho)*E_i       (shared pace G, team-specific E_i)
-  touchdowns      TD_i ~ Poisson(mu_i * exp(sigma*Z_i - sigma^2/2))      (lognormal mixing: overdispersed)
-  field goals     FG_i ~ Poisson(phi_i * exp(0.5*sigma*Z_i - sigma^2/8))
+  drives          each of ~11 drives ends in a TD, a FG or nothing; the per-drive TD logit moves with Z_i,
+                  and the FG rate on non-TD drives falls when a game's TDs run above expectation
   points          6*TD + XP(0.94 each) + 3*FG (+ rare safety); halves/quarters by binomial thinning
-  TD types        pass ~ Binomial(TD, pass_share); D/ST share; the rest rushing
+  TD types        pass ~ Binomial(TD, s) with s ~ Beta per simulated game (mean = team pass share,
+                  concentration ~12: some games are pass-heavy, some run-heavy); D/ST share; the rest rushing
   passing game    attempts by game script (trailing teams pass more); targets ~ Multinomial over
                   Dirichlet-perturbed target shares; receptions ~ Binomial(catch rate); yards ~ Gamma
                   per reception x efficiency(Z); QB yards / completions are the receivers' sums
@@ -36,6 +37,12 @@ class SimParams:
     sigma: float = 0.30
     rho: float = 0.10
     dst_share: float = 0.04
+    pass_share_conc: float = 12.0  # Beta concentration of the per-game pass-TD share (lower = more game-to-game spread)
+    # TDs replace field goals: the FG rate on a game's non-TD drives scales by exp(-fg_td_tradeoff x (TDs -
+    # expected TDs)), normalized to the same average FG rate. Leaves the TD count (and so every TD
+    # marginal) untouched. nflverse 2018-25: 3.4 non-TD
+    # points on 4+ pass-TD days vs 6.0 on average; 0 (the old independent FGs) gave 4.9.
+    fg_td_tradeoff: float = 0.2
     h1_share_td: float = 0.48
     h1_share_fg: float = 0.47
     q1_share_of_h1: float = 0.44
@@ -205,6 +212,13 @@ def _ladder_mean(xs: np.ndarray, ps: np.ndarray) -> float:
     return float(surv.sum() * 0.5)
 
 
+def _pass_share_draws(rng: np.random.Generator, mean: float, conc: float, n: int) -> np.ndarray:
+    m = float(np.clip(mean, 0.05, 0.95))
+    if conc <= 0:
+        return np.full(n, m)
+    return rng.beta(m * conc, (1.0 - m) * conc, size=n)
+
+
 @dataclass
 class SimResult:
     n: int
@@ -232,11 +246,17 @@ class GameSim:
         for i, t in enumerate(self.teams):
             d_i = drives + (extra if i == 0 else 0)
             ptd = expit(logit(np.clip(t.mu_td, 1e-4, 0.9)) + p.sigma * z[i])
+            pfg = np.clip(t.phi_fg, 0.0, 0.98 - ptd)
             tdi = rng.binomial(d_i, ptd)
-            q = np.clip(t.phi_fg, 0.0, 0.98 - ptd) / np.maximum(1e-9, 1.0 - ptd)
+            q = pfg / np.maximum(1e-9, 1.0 - ptd)
+            if p.fg_td_tradeoff > 0:  # a 4-TD day's extra TDs came from drives that would have been FGs
+                tilt = np.exp(-p.fg_td_tradeoff * (tdi - d_i * ptd))
+                q = np.clip(q * tilt / tilt.mean(), 0.0, 0.95)  # same average FG rate, shifted toward low-TD games
             fgi = rng.binomial(d_i - tdi, q)
-            ptd = rng.binomial(tdi, t.pass_share)
-            dst = rng.binomial(tdi - ptd, min(0.5, p.dst_share / max(1e-6, 1 - t.pass_share)))
+            # A 4-pass-TD day is often a pass-heavy game, not a 6-TD game: draw this game's pass share.
+            share = _pass_share_draws(rng, t.pass_share, p.pass_share_conc, n)
+            ptd = rng.binomial(tdi, share)
+            dst = rng.binomial(tdi - ptd, np.minimum(0.5, p.dst_share / np.maximum(1e-6, 1 - share)))
             rtd = tdi - ptd - dst
             # nested scoring: Q1 inside 1H inside the game, XPs and safeties assigned consistently
             td_h1 = rng.binomial(tdi, p.h1_share_td)

@@ -1,7 +1,7 @@
 """``combo-edge`` command line. With no arguments it starts the dashboard and opens the browser.
 
     combo-edge                      dashboard at http://localhost:8000 (env from KALSHI_ENV, default demo)
-    combo-edge scan [--dry-run]     one headless scan (same run_scan() as the Run button)
+    combo-edge scan [--dry-run] [--max-payout 40]   one headless scan (same run_scan() as the Run button)
     combo-edge doctor               check keys, connectivity, websocket auth, toolchain
     combo-edge limits               show your API tier and token buckets
     combo-edge upgrade-tier         one-time: request the Advanced API tier
@@ -95,8 +95,15 @@ def cmd_serve(args: argparse.Namespace) -> None:
 def cmd_scan(args: argparse.Namespace) -> int:
     from combo_edge.context import default_db
     from combo_edge.hooks import default_hooks
+    from combo_edge.ranking import filter_max_payout, parse_max_payout
     from combo_edge.scan import ScanProgress, ScanRequest, run_scan
 
+    if args.max_payout is not None:
+        try:
+            parse_max_payout(args.max_payout)
+        except ValueError as exc:
+            print(exc)
+            return 2
     prog = ScanProgress()
     req = ScanRequest(env=_env(args), dry_run=args.dry_run, rfq_budget=args.budget, max_new=args.max_new, stake=args.stake,
                       window_s=args.window, trigger="cli")
@@ -113,7 +120,11 @@ def cmd_scan(args: argparse.Namespace) -> int:
         for r in core:
             q = "" if s.get("dry_run") else f", {r['quoted']} quoted"
             print(f"  {r['game']}  {r['pair']}  ({r['label']}): {r['selected']}/{r['available']} {verb}{q}")
-    for r in res.rows[: args.top]:
+    rows = res.rows
+    if args.max_payout is not None:
+        rows = filter_max_payout(rows, parse_max_payout(args.max_payout))
+        print(f"showing {len(rows)} of {len(res.rows)} rows at or under {parse_max_payout(args.max_payout):g}x")
+    for r in rows[: args.top]:
         ev = f"{100 * r.ev:+.0f}%" if r.ev is not None else "  n/a"
         pay = f"{r.quoted_payout:.1f}x" if r.quoted_payout else "-"
         print(f"  {ev:>6}  {pay:>8}  ratio {r.ratio or 0:.2f}  [{r.pool}]  {r.legs}")
@@ -157,7 +168,7 @@ def cmd_kill(args: argparse.Namespace) -> None:
 
     db = default_db()
     execution.kill(db, "kill switch (CLI)")
-    db.settings_set({"requote_enabled": False, "fullscan_enabled": False})
+    db.settings_set({"requote_enabled": False, "fullscan_enabled": False, "fullscan_early_week": False})
 
     async def go() -> int:
         c = make_clients(_env(args), db)
@@ -309,6 +320,7 @@ def main(argv: list[str] | None = None) -> None:
     sc.add_argument("--stake", type=float)
     sc.add_argument("--window", type=float)
     sc.add_argument("--top", type=int, default=15)
+    sc.add_argument("--max-payout", help="only show rows paying at most this much: 40, 40x or <40x")
     for name in ("doctor", "limits", "upgrade-tier", "kill", "recorder", "requote-due", "fullscan-check", "nflverse-sync", "fit", "exploration-report"):
         sub.add_parser(name)
     ld = sub.add_parser("launchd")

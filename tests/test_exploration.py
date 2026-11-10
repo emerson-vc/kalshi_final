@@ -120,8 +120,11 @@ def test_missed_slots_are_marked() -> None:
     assert not due and missed == 1
 
 
-async def test_requote_disabled_by_default(mock_exchange) -> None:  # type: ignore[no-untyped-def]
-    assert (await requote_due("mock", default_db()))["status"] == "disabled"
+async def test_requote_on_by_default_and_can_be_turned_off(mock_exchange) -> None:  # type: ignore[no-untyped-def]
+    db = default_db()
+    assert (await requote_due("mock", db))["status"] == "done"  # on by default: only re-RFQs, never creates or bets
+    db.settings_set({"requote_enabled": False})
+    assert (await requote_due("mock", db))["status"] == "disabled"
 
 
 def test_launchd_plists_and_guard() -> None:

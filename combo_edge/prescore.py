@@ -23,7 +23,7 @@ import yaml
 
 from combo_edge import pricing
 from combo_edge.candidates import FAMILIES, Candidate
-from combo_edge.copulas import Copula, fit_to_anchors
+from combo_edge.copulas import Copula, cap_conditional, fit_to_anchors
 from combo_edge.sports.base import Leg
 from combo_edge.strata import classify, relation
 
@@ -56,6 +56,11 @@ class FamilyPrior:
     expected_ratio: float
     anchors: tuple[tuple[float, float, float], ...] = ()
 
+    @property
+    def max_cond(self) -> float | None:
+        """Highest anchored conditional: the copula may not imply a stronger P(B|A) than any find showed."""
+        return max(a[2] for a in self.anchors) if self.anchors else None
+
     def extrapolation(self, pa: float, pb: float) -> float:
         """Distance (in e-folds of probability) from the nearest anchor; 0 when unanchored."""
         if not self.anchors or pa <= 0 or pb <= 0:
@@ -82,6 +87,15 @@ class Priors:
     @property
     def max_expected_payout(self) -> float:
         return float(self.defaults.get("max_expected_payout", 200.0))
+
+    @property
+    def max_lift(self) -> float:
+        return float(self.defaults.get("max_lift", 6.0))
+
+    @property
+    def payout_uncertainty(self) -> tuple[float, float]:
+        """(extra band per doubling of payout, payout where it starts)."""
+        return float(self.defaults.get("payout_uncertainty_per_doubling", 0.10)), float(self.defaults.get("payout_uncertainty_from", 20.0))
 
     @property
     def extrapolation_uncertainty(self) -> float:
@@ -214,6 +228,8 @@ class Prescorer:
             sa = np.array([cands[i].legs[0].side == "yes" for i in idxs])
             sb = np.array([cands[i].legs[1].side == "yes" for i in idxs])
             joint = prior.copula.joint(pa, pb, sa, sb)
+            if prior.max_cond is not None:
+                joint = np.where(sa & sb, cap_conditional(joint, pa, pb, prior.max_cond), joint)
             for j, i in enumerate(idxs):
                 c = cands[i]
                 c.fair_joint = float(max(joint[j], 0.0))
@@ -240,8 +256,32 @@ class Prescorer:
             elif c.fair_joint:
                 # A leg without an ask: assume makers price off our fair (worst case: no edge).
                 c.expected_payout = pricing.payout_fee_inclusive(min(0.99, c.fair_joint))
+            raw_payout = c.expected_payout
             if c.expected_payout is not None:
                 # Prior only: makers rarely sell penny-on-penny combos at the product of 1c asks.
                 c.expected_payout = min(c.expected_payout, self.priors.max_expected_payout)
+            self._tail_guards(c, raw_payout)
             c.expected_ev = pricing.ev(c.fair_joint, c.expected_payout)
             c.expected_ev_lower = pricing.ev(c.fair_lower, c.expected_payout)
+
+    def _tail_guards(self, c: Candidate, payout: float | None) -> None:
+        """Keep the model's edge from growing without bound as both legs get longer.
+
+        1. Lift cap: fair_joint <= max_lift * P(A) * P(B) (side probabilities), any fair source.
+        2. Payout band: fair_lower drops by an extra 10% of fair per doubling of payout above 20x, so EV at
+           the lower bound (the ranking key) penalizes deep tails where the dependence is least known.
+        """
+        if c.fair_joint is None:
+            return
+        if c.p_legs and all(p is not None for p in c.p_legs):
+            cap = self.priors.max_lift * pricing.product(p for p in c.p_legs if p is not None)
+            if c.fair_joint > cap > 0:
+                scale = cap / c.fair_joint
+                c.fair_joint = cap
+                c.fair_lower = None if c.fair_lower is None else c.fair_lower * scale
+                c.notes.append("lift_capped")
+        per_doubling, start = self.priors.payout_uncertainty
+        if c.fair_lower is not None and payout is not None and payout > start:
+            c.fair_lower = max(0.0, c.fair_lower - per_doubling * math.log2(payout / start) * c.fair_joint)
+        if c.p_legs and c.p_legs[0]:
+            c.p_b_given_a = c.fair_joint / c.p_legs[0]

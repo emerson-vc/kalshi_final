@@ -35,8 +35,15 @@ PREFIX = "/trade-api/v2"
 _CLOSE = object()
 
 
+FIXTURES = Path(__file__).resolve().parents[2] / "tests" / "fixtures" / "live"
+
+
 def _load(name: str) -> Any:
-    with gzip.open(DATA / f"{name}.json.gz", "rt") as f:
+    """Trimmed recorded markets in mock/data; falls back to the full recorded fixtures if one is missing."""
+    path = DATA / f"{name}.json.gz"
+    if not path.exists():
+        path = FIXTURES / f"{name}.json.gz"
+    with gzip.open(path, "rt") as f:
         return json.load(f)
 
 

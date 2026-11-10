@@ -58,8 +58,11 @@ def fair_model(uni: Universe):  # type: ignore[no-untyped-def]
     fm = build_fair_model(uni)
     if fm is not None:
         cal = default_db().meta_get(f"calibration:{uni.env}") or {}
-        for fam, u in ((cal.get("history") or {}).get("family_u") or {}).items():
+        hist = cal.get("history") or {}
+        for fam, u in (hist.get("family_u") or {}).items():
             fm.family_u[fam] = fm.family_u[f"no_{fam}"] = float(u)  # wider band where history disagrees
+        for fam, sh in (hist.get("family_shift") or {}).items():
+            fm.family_shift[fam] = float(sh)  # YES/YES conditional moved toward nflverse history
     return fm
 
 
@@ -83,7 +86,9 @@ def load_promoted(db: Database, env: str) -> None:
 def thompson(db: Database, env: str):  # type: ignore[no-untyped-def]
     from combo_edge.learning.bandit import Posteriors, rewards, thompson_key
 
-    return thompson_key(Posteriors(rewards(db, env)))
+    from combo_edge.scan import runtime_settings
+
+    return thompson_key(Posteriors(rewards(db, env, runtime_settings(db).bandit_min_clv_obs)))
 
 
 def learn_after_run(*, db: Database, env: str, settings: RuntimeSettings, progress: Any, **_: Any) -> None:
@@ -94,8 +99,10 @@ def learn_after_run(*, db: Database, env: str, settings: RuntimeSettings, progre
     for p in check_promotions(db, env, settings):
         progress.note(f"PROMOTED new template family: {p['family']} (n={p['n']}, {p['games']} games, mean edge {100 * p['mean']:+.0f}%)")
     update_recommendation(db, env)
-    last = (db.meta_get(f"calibration:{env}") or {}).get("ts") or 0
-    if timeutil.now() - float(last) > 24 * 3600:
+    cal = db.meta_get(f"calibration:{env}") or {}
+    last = cal.get("ts") or 0
+    # daily, or right away when the stored calibration predates the family shifts
+    if timeutil.now() - float(last) > 24 * 3600 or "family_shift" not in (cal.get("history") or {}):
         try:
             run_calibration(db, env)
         except Exception:  # noqa: BLE001

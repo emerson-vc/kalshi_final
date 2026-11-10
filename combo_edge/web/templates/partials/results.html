@@ -42,7 +42,14 @@
   {% if not res.rows %}
     <div class="empty">No probed combos yet. Press <b>Run scan</b>{% if h.env == 'mock' %} (mock exchange: fake makers, offline){% endif %}.</div>
   {% else %}
-  <div class="tablewrap"><table>
+  <div class="fields payout-filter" id="payout-filter">
+    <label class="f">Max payout<input id="max-payout" type="text" inputmode="decimal" placeholder="e.g. 40x" autocomplete="off"
+      title="Hide rows paying more than this: 40, 40x or <40x. Rows without a quote use the expected payout. Blank shows everything."></label>
+    <div class="quick">{% for v in ['<25x', '<40x', '<60x', '<100x'] %}<button type="button" class="secondary" data-max-payout="{{ v }}">{{ v }}</button>{% endfor %}<button type="button" class="secondary" data-max-payout="">All</button></div>
+    <small class="muted" id="payout-count" aria-live="polite"></small>
+    <small class="neg" id="payout-error"></small>
+  </div>
+  <div class="tablewrap"><table id="results-table" data-total="{{ res.rows|length }}">
     <thead><tr>
       <th>Legs</th><th class="num" title="Fee-inclusive payout at the best quote (taker YES = 1 − best NO bid)">Quoted payout</th>
       <th class="num" title="Product of fee-inclusive leg payouts at their asks">Leg product</th>
@@ -52,7 +59,8 @@
     </tr></thead>
     <tbody>
     {% for r in res.rows[:300] %}
-      <tr>
+      {% set pay = r.quoted_payout if r.quoted_payout is not none else r.expected_payout %}
+      <tr data-payout="{{ pay if pay is not none else '' }}">
         <td class="legs">{% for part in r.legs.split(' + ') %}<span class="leg">{{ part }}</span>{% endfor %}
           <span class="fam">{{ r.family }} · {{ r.fair_source }}
             {% if r.existed %}<span class="chip free" title="Someone else created it: no creation budget spent">existing</span>{% endif %}

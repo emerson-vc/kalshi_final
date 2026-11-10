@@ -110,3 +110,57 @@
   };
   document.addEventListener("change", (e) => { if (e.target.matches(".topbar select[name=env]")) { if (window.ceEnvSwitch(e.target.form)) e.target.form.submit(); } });
 })();
+
+// Max-payout filter on the Scan tab. Client-side, so it stacks with the server-side family/team/kickoff
+// filters; re-applied after every HTMX swap and remembered in localStorage. Parsing mirrors
+// ranking.parse_max_payout: "40", "40x", "<40x", "<=100x"; blank = show all.
+(function () {
+  const KEY = "combo-edge:max-payout";
+  const RE = /^\s*(?:<=?|≤)?\s*(\d+(?:\.\d+)?)\s*x?\s*$/i;
+
+  function load() { try { return localStorage.getItem(KEY) || ""; } catch (e) { return ""; } }
+  function save(v) { try { localStorage.setItem(KEY, v); } catch (e) { /* private mode: not remembered */ } }
+
+  function parse(text) {
+    if (!text || !text.trim()) return { max: null };
+    const m = RE.exec(text);
+    if (!m || parseFloat(m[1]) <= 0) return { error: "Use a number like 40, 40x or <40x" };
+    return { max: parseFloat(m[1]) };
+  }
+
+  function apply() {
+    const input = document.getElementById("max-payout");
+    const table = document.getElementById("results-table");
+    if (!input || !table) return;
+    const { max, error } = parse(input.value);
+    const err = document.getElementById("payout-error");
+    if (err) err.textContent = error || "";
+    const rows = table.querySelectorAll("tbody tr[data-payout]");
+    let shown = 0;
+    rows.forEach((tr) => {
+      const p = tr.dataset.payout === "" ? null : parseFloat(tr.dataset.payout);
+      const hide = !error && max != null && p != null && p > max + 1e-9;
+      tr.hidden = hide;
+      if (!hide) shown += 1;
+    });
+    const total = parseInt(table.dataset.total || rows.length, 10);
+    const count = document.getElementById("payout-count");
+    if (count) count.textContent = `showing ${shown} of ${rows.length}` + (total > rows.length ? ` (top ${rows.length} of ${total})` : "");
+    document.querySelectorAll("[data-max-payout]").forEach((b) => b.classList.toggle("active", b.dataset.maxPayout === input.value.trim()));
+  }
+
+  function bind() {
+    const input = document.getElementById("max-payout");
+    if (!input || input.dataset.bound) { apply(); return; }
+    input.dataset.bound = "1";
+    input.value = load();
+    input.addEventListener("input", () => { save(input.value); apply(); });
+    document.querySelectorAll("[data-max-payout]").forEach((b) => b.addEventListener("click", () => {
+      input.value = b.dataset.maxPayout; save(input.value); apply();
+    }));
+    apply();
+  }
+
+  document.addEventListener("DOMContentLoaded", bind);
+  document.addEventListener("htmx:afterSwap", bind);
+})();

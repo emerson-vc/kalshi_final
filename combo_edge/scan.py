@@ -15,16 +15,17 @@ from typing import Any
 
 import combo_edge.sports.nfl.families  # noqa: F401 - registers the template families
 from combo_edge import timeutil
-from combo_edge.candidates import FAMILIES, Candidate, GameIndex
+from combo_edge.candidates import FAMILIES, Candidate, GameIndex, parse_signature
 from combo_edge.combos import ComboResolver
 from combo_edge.context import EnvClients, log_limits, make_clients
+from combo_edge.core import build_context as build_core_context
 from combo_edge.core import coverage as core_coverage
-from combo_edge.core import load_core
+from combo_edge.core import Sweep, load_core
 from combo_edge.prescore import Prescorer, load_priors
 from combo_edge.probe import ProbeEngine, ProbeRequest, ProbeResult, cleanup_our_open_rfqs, drain_pending_cancels
 from combo_edge.quotes import QuoteRouter
 from combo_edge.ranking import ResultRow, build_row, rank
-from combo_edge.selection import select
+from combo_edge.selection import Selection, select
 from combo_edge.settings import RuntimeSettings, data_dir, load_env_settings
 from combo_edge.snapshots import open_prices, refresh_legs, write_snapshots
 from combo_edge.sports.nfl.implications import logical_class, structural_rule
@@ -105,6 +106,79 @@ class ScanHooks:
 
 
 HOOKS = ScanHooks()
+
+
+def _leg_price(yes_bid: float | None, yes_ask: float | None) -> float | None:
+    if yes_bid is not None and yes_ask is not None:
+        return (float(yes_bid) + float(yes_ask)) / 2.0
+    return float(yes_ask) if yes_ask is not None else (float(yes_bid) if yes_bid is not None else None)
+
+
+def recently_quoted(db: Database, env: str, st: RuntimeSettings, prices: dict[str, float] | None = None) -> set[str]:
+    """Signatures quoted within ``core_requote_after_h``: they go to the back of the core queue, unless a
+    leg's price has moved more than ``core_requote_move`` (3c) since that quote (then they're due again)."""
+    last: dict[str, int | None] = {}
+    for r in db.fetchall("SELECT signature, run_id FROM rfqs WHERE env=:e AND created_at >= :t AND outcome='quoted' "
+                         "AND signature IS NOT NULL ORDER BY created_at", {"e": env, "t": timeutil.now() - st.core_requote_after_h * 3600}):
+        last[r["signature"]] = r["run_id"]
+    if not prices or not last:
+        return set(last)
+    runs = sorted({r for r in last.values() if r is not None})
+    snap: dict[tuple[int, str], float] = {}
+    if runs:
+        ph = ",".join(f":r{i}" for i in range(len(runs)))
+        for r in db.fetchall(f"SELECT run_id, ticker, yes_bid, yes_ask FROM leg_snapshots WHERE run_id IN ({ph})",
+                             {f"r{i}": v for i, v in enumerate(runs)}):
+            px = _leg_price(r["yes_bid"], r["yes_ask"])
+            if px is not None:
+                snap[(r["run_id"], r["ticker"])] = px
+    out = set()
+    for sig, run in last.items():
+        moved = False
+        for t, _side in parse_signature(sig):
+            then, now = snap.get((run, t)) if run is not None else None, prices.get(t)
+            if then is not None and now is not None and abs(now - then) > st.core_requote_move + 1e-9:
+                moved = True
+                break
+        if not moved:
+            out.add(sig)
+    return out
+
+
+def _qb_five_plus(c: Candidate) -> bool:
+    """QB 5+ pass TD x team total: explore-only (core sweeps 3+/4+)."""
+    return c.family == "qb_ptd_x_team_total" and any(s.side == "yes" and s.leg.kind == "pass_td" and (s.leg.threshold or 0) >= 4.5
+                                                    for s in c.legs)
+
+
+def explore_only_rule(db: Database, env: str, st: RuntimeSettings, cands: list[Candidate]) -> Callable[[Candidate], bool]:
+    """Families only the explore pool may send: ``explore_only_families``, every no_* family and every
+    exploration-strata pair (explore:*), until promoted or until the bandit shows a positive posterior over
+    ``explore_only_release_quotes`` quotes. QB 5+ pass TD x team total is explore-only too."""
+    from combo_edge.learning.bandit import released_families
+
+    gated = set(st.explore_only_families) | {c.family for c in cands if c.family.startswith(("no_", "explore:"))}
+    gated -= released_families(db, env, gated, st.explore_only_release_quotes)
+    return lambda c: c.family in gated or _qb_five_plus(c)
+
+
+def plan_selection(cands: list[Candidate], *, db: Database, env: str, st: RuntimeSettings, hooks: ScanHooks, rfq_budget: int,
+                   creation_budget: int, known: set[str], recent: set[str] | None = None,
+                   uni: Universe | None = None) -> tuple[Selection, list[Sweep]]:
+    """The run's pool split over scored candidates (shared by run_scan and scripts/diagnose_selection.py)."""
+    shares = {**st.budget_shares(), "unpriced": st.unpriced_share}
+    sweeps = load_core()
+    ctx = build_core_context(uni) if uni is not None else None
+    picker = hooks.explore_picker_factory(db, env, st) if hooks.explore_picker_factory else None
+    ekey = hooks.exploit_key_factory(db, env) if hooks.exploit_key_factory else None
+    if recent is None:
+        prices = {t: px for t, l in (uni.legs.items() if uni is not None else []) if (px := _leg_price(l.yes_bid, l.yes_ask)) is not None}
+        recent = recently_quoted(db, env, st, prices)
+    sel = select(cands, rfq_budget=rfq_budget, creation_budget=creation_budget, known=known, shares=shares, explore_picker=picker,
+                 exploit_key=ekey, core=sweeps, core_ctx=ctx, recently_quoted=recent,
+                 payout_band=(st.rank_payout_min, st.rank_payout_max), explore_only=explore_only_rule(db, env, st, cands))
+    sel.core_ctx = ctx
+    return sel, sweeps
 
 
 def generate_candidates(uni: Universe, families: list[str] | None, blocked: set[str]) -> list[Candidate]:
@@ -321,17 +395,10 @@ async def run_scan(
 
         progress.phase = "select"
         known = set(resolver.index.lookup_many([c.signature for c in cands]))
-        shares = {**st.budget_shares(), "unpriced": st.unpriced_share}
-        sweeps = load_core()
-        recent = {r["signature"] for r in db.fetchall(
-            "SELECT DISTINCT signature FROM rfqs WHERE env=:e AND created_at >= :t AND outcome='quoted' AND signature IS NOT NULL",
-            {"e": env, "t": timeutil.now() - st.core_requote_after_h * 3600})}
-        picker = hooks.explore_picker_factory(db, env, st) if hooks.explore_picker_factory else None
         # A dry run creates nothing, so it plans against the full run budget.
         creation_budget = budget if req.dry_run else resolver.budget_left()
-        ekey = hooks.exploit_key_factory(db, env) if hooks.exploit_key_factory else None
-        sel = select(cands, rfq_budget=budget, creation_budget=creation_budget, known=known, shares=shares, explore_picker=picker,
-                     exploit_key=ekey, core=sweeps, recently_quoted=recent)
+        sel, sweeps = plan_selection(cands, db=db, env=env, st=st, hooks=hooks, rfq_budget=budget,
+                                     creation_budget=creation_budget, known=known, uni=uni)
         chosen_sigs = {c.signature for c in sel.chosen}
         progress.counters["selected"] = len(sel.chosen)
         progress.note(f"selected {len(sel.chosen)} ({', '.join(f'{k}={v}' for k, v in sel.by_pool.items())}); "
@@ -342,7 +409,7 @@ async def run_scan(
         if req.dry_run:
             rows = [_dry_row(c, st) for c in sel.chosen]
             status = "dry_run"
-            summary = {"dry_run": True, "core": core_coverage(cands, sweeps, chosen_sigs)}
+            summary = {"dry_run": True, "core": core_coverage(cands, sweeps, chosen_sigs, ctx=sel.core_ctx)}
             return ScanResult(run_id, status, rank(rows), uni.coverage.to_dict(), summary)
 
         progress.phase = "snapshots"
@@ -405,7 +472,7 @@ async def run_scan(
         elif not uni.coverage.ok:
             status = "coverage_error"
         summary = _summary(results, resolver, clients.limiter)
-        summary["core"] = core_coverage(cands, sweeps, chosen_sigs, {r.request.signature for r in results if r.quoted})
+        summary["core"] = core_coverage(cands, sweeps, chosen_sigs, {r.request.signature for r in results if r.quoted}, ctx=sel.core_ctx)
         progress.note(f"done: {summary['quoted']}/{summary['rfqs_sent']} RFQs quoted"
                       + (f", fill rate {summary['fill_rate']:.0%}" if summary.get("fill_rate") is not None else ""))
     except Exception as exc:
@@ -447,10 +514,11 @@ def _dry_row(c: Candidate, st: RuntimeSettings) -> ResultRow:
                      teams=sorted({s.leg.team for s in c.legs if s.leg.team}), players=c.player_names(), hours_to_start=None,
                      quoted_payout=c.expected_payout, leg_payout_product=c.leg_payout_product, ratio=c.expected_ratio,
                      fair_joint=c.fair_joint, fair_lower=c.fair_lower, fair_payout=(1 / c.fair_joint) if c.fair_joint else None,
-                     ev=c.expected_ev, ev_lower=None, fair_source=c.fair_source,
+                     ev=c.expected_ev, ev_lower=c.expected_ev_lower, fair_source=c.fair_source,
                      suggested_stake=kelly_stake(c.fair_joint, c.fair_lower, c.expected_payout, st.bankroll, st.kelly_fraction, st.cap_combo),
                      n_makers=0, taker_yes_price=None, best_no_bid=None, second_no_bid=None, quote_spread=None, existed=c.existed,
-                     pool=c.pool, stratum_l1=c.stratum_l1, rfq_id=None, outcome="dry_run", link=None, unpriced=c.unpriced)
+                     pool=c.pool, stratum_l1=c.stratum_l1, rfq_id=None, outcome="dry_run", link=None, unpriced=c.unpriced,
+                     expected_payout=c.expected_payout)
 
 
 def _feed_demand(db: Database, cands: list[Candidate]) -> dict[str, int]:

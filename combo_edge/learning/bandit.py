@@ -7,8 +7,9 @@ the fair model + maker model. Each run:
 - the explore slice (a fixed ~15% after exploration) goes to under-sampled strata, plus random same-game
   pairs from the leg graph that the simulator says are correlated but no template covers.
 
-Reward = EV at the quote (model fair x quoted payout - 1) plus closing-line value from re-quotes.
-Never win/loss: on 10x-50x payouts it is far too noisy at our volume.
+Reward = EV at the quote (model fair x quoted payout - 1) plus closing-line value from re-quotes; the EV
+part counts half until the arm has 10 CLV observations. Never win/loss: on 10x-50x payouts it is far too
+noisy at our volume.
 """
 
 from __future__ import annotations
@@ -24,18 +25,26 @@ from combo_edge.learning.labels import edge_labels
 from combo_edge.storage import Database
 
 CLV_WEIGHT = 0.5
+MIN_CLV_OBS = 10  # arms with fewer CLV observations...
+UNPROVEN_EV_WEIGHT = 0.5  # ...get half their model-EV reward
 PRIOR_N = 5.0
 PRIOR_SD = 0.5
 
 
-def rewards(db: Database, env: str) -> list[tuple[str, float]]:
-    labels = edge_labels(db, env)
+def rewards(db: Database, env: str, min_clv_obs: int = MIN_CLV_OBS) -> list[tuple[str, float]]:
+    """Per probe quote: model EV at the quote + CLV. Until an arm has ``min_clv_obs`` CLV observations
+    its model-EV part counts half: model EV alone is the quantity most likely to be wrong in the tails."""
+    labels = [l for l in edge_labels(db, env) if l.get("stratum_l1") and l["purpose"] == "probe"]
     clv = closing_values(db, env)
+    n_clv: dict[str, int] = defaultdict(int)
+    for l in labels:
+        if l["rfq_id"] in clv:
+            n_clv[l["stratum_l1"]] += 1
     out = []
     for l in labels:
-        if not l.get("stratum_l1") or l["purpose"] != "probe":
-            continue
         r = max(-1.0, min(3.0, float(l["edge"])))
+        if n_clv[l["stratum_l1"]] < min_clv_obs:
+            r *= UNPROVEN_EV_WEIGHT
         c = clv.get(l["rfq_id"])
         if c is not None:
             r += CLV_WEIGHT * max(-1.0, min(1.0, c))
@@ -105,3 +114,34 @@ def correlated(c: Candidate, min_lift: float = 0.15) -> bool:
 def summary(post: Posteriors, top: int = 10) -> list[dict[str, Any]]:
     rows = [{"arm": a, "mean": m, "se": se, "n": n} for a, (m, se, n) in post.stats.items()]
     return sorted(rows, key=lambda r: -r["mean"])[:top]
+
+
+def family_rewards(db: Database, env: str) -> list[tuple[str, float]]:
+    """(family, reward) per probe quote, the same reward the strata arms use."""
+    labels = edge_labels(db, env)
+    clv = closing_values(db, env)
+    out = []
+    for l in labels:
+        if not l.get("family") or l["purpose"] != "probe":
+            continue
+        r = max(-1.0, min(3.0, float(l["edge"])))
+        c = clv.get(l["rfq_id"])
+        if c is not None:
+            r += CLV_WEIGHT * max(-1.0, min(1.0, c))
+        out.append((l["family"], r))
+    return out
+
+
+def released_families(db: Database, env: str, gated: set[str], min_quotes: int = 30) -> set[str]:
+    """Explore-only families that have earned exploit/core access: promoted, or a positive posterior mean
+    over at least ``min_quotes`` probe quotes."""
+    if not gated:
+        return set()
+    promoted = {r["family_key"] for r in db.fetchall("SELECT family_key FROM promotions WHERE active=1")}
+    post = Posteriors(family_rewards(db, env))
+    out = set()
+    for f in gated:
+        m, _se, n = post.stats.get(f, (0.0, PRIOR_SD, 0))
+        if f in promoted or f"promoted:{f}" in promoted or (n >= min_quotes and m > 0):
+            out.add(f)
+    return out

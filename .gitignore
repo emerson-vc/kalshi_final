@@ -6,7 +6,7 @@
 *.key
 
 # Runtime data (SQLite, logs, nflverse cache, reports)
-data/
+/data/
 
 # Python
 .venv/

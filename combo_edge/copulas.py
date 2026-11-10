@@ -119,3 +119,10 @@ def fit_to_anchors(anchors: list[tuple[float, float, float]], kind: Kind = "t", 
     lo, hi = _BOUNDS[kind]
     res = minimize_scalar(loss, bounds=(lo, hi), method="bounded", options={"xatol": 1e-4})
     return Copula(kind, float(res.x), df)
+
+
+def cap_conditional(joint: np.ndarray, pa: np.ndarray, pb: np.ndarray, max_cond: float) -> np.ndarray:
+    """Cap a joint-YES probability so neither conditional exceeds ``max_cond``:
+    P(B|A) = S/pa <= max_cond and P(A|B) = S/pb <= max_cond, i.e. S <= max_cond * min(pa, pb).
+    Copulas fitted to a family's anchors otherwise extrapolate conditionals toward 1 in the far tails."""
+    return np.minimum(np.asarray(joint, dtype=float), max_cond * np.minimum(np.asarray(pa, dtype=float), np.asarray(pb, dtype=float)))

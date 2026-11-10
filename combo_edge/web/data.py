@@ -88,6 +88,15 @@ def core_summary(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return list(out.values())
 
 
+def _agents_installed() -> dict[str, bool]:
+    try:
+        from combo_edge.scheduler import launchd
+
+        return launchd.status()
+    except Exception:  # noqa: BLE001
+        return {}
+
+
 def health(db: Database, env: str, st: RuntimeSettings) -> dict[str, Any]:
     used = CreationLedger(db, env).used()
     limits = db.fetchone("SELECT * FROM limits_log WHERE env=:e ORDER BY id DESC LIMIT 1", {"e": env})
@@ -122,7 +131,8 @@ def health(db: Database, env: str, st: RuntimeSettings) -> dict[str, Any]:
         "http": http[:25], "n429": sum(int(h["n"]) for h in http if h["status"] == 429),
         "coverage": (run or {}).get("coverage", {}), "coverage_run": (run or {}).get("id"),
         "errors": errors, "requote_runs": requote_runs,
-        "requote_enabled": st.requote_enabled, "fullscan_enabled": st.fullscan_enabled,
+        "requote_enabled": st.requote_enabled, "fullscan_enabled": st.fullscan_enabled, "fullscan_early_week": st.fullscan_early_week,
+        "agents": _agents_installed(),
         "recorder": _recorder_status(db, env),
         "side": {"counts": counts, "mapping": current_side_mapping(db, env, st.side_check_min_quotes), "need": st.side_check_min_quotes},
         "pending_cancels": db.fetchall("SELECT * FROM pending_cancels WHERE env=:e", {"e": env}),
