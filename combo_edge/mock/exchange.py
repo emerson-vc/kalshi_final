@@ -309,7 +309,9 @@ class MockExchange:
             need_auth()
             if self.faults.rest_quotes_hidden:
                 return _ok({"quotes": [], "cursor": ""})
-            rows = [self._quote_rest(q) for q in self.quotes.values() if q["rfq_id"] == p.get("rfq_id")]
+            # Kalshi: every status, best price on the RFQ's main side first (NO for target-cost RFQs)
+            mine = sorted((q for q in self.quotes.values() if q["rfq_id"] == p.get("rfq_id")), key=lambda q: (-q["no_bid"], q["created_ts"]))
+            rows = [self._quote_rest(q) for q in mine]
             return _ok({"quotes": rows, "cursor": ""})
         if m == "GET" and path == "/portfolio/positions":
             need_auth()
@@ -485,6 +487,9 @@ class MockExchange:
              # contracts named by the maker-bid side taken: taking the NO bid buys YES at 1 - no_bid
              "no_contracts": pricing.contracts_for_target(target, 1 - no_bid), "yes_contracts": pricing.contracts_for_target(target, 1 - yes_bid),
              "status": "open", "created_ts": time.time(), "target": target}
+        for prev in self.quotes.values():  # like Kalshi: a maker's new quote cancels its previous one
+            if prev["rfq_id"] == rid and prev["maker"] == mk.name and prev["status"] == "open":
+                prev["status"] = "cancelled"
         self.quotes[qid] = q
         self.quotes_sent += 1
         self._broadcast("quote_created", self._quote_ws(q))

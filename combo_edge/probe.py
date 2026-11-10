@@ -222,12 +222,9 @@ class ProbeEngine:
             log.warning("REST quote fallback failed for %s: %s", rfq_id, exc)
             return
         res.rest_used = True
-        seen = {(q.quote_id, q.yes_bid, q.no_bid) for q in watch.quotes}
         now = timeutil.now()
         for row in rows:
-            q = QuoteObs.from_rest(row, now)
-            if (q.quote_id, q.yes_bid, q.no_bid) not in seen:
-                watch.add(q)
+            watch.add_rest(QuoteObs.from_rest(row, now))
 
     def _summarize(self, req: ProbeRequest, res: ProbeResult, watch: RfqWatch) -> None:
         latest = watch.latest_by_maker()
