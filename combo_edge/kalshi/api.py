@@ -113,13 +113,16 @@ class KalshiAPI:
         return [e async for e in self.paginate("/events/multivariate", "events", {"limit": 200, **params}, max_pages=20)]
 
     # ------------------------------------------------------------------ RFQs (price discovery)
-    async def create_rfq(self, market_ticker: str, target_cost: float) -> str:
-        """RFQ sized by fee-inclusive target cost. Never rests a remainder, never replaces existing RFQs."""
+    async def create_rfq(self, market_ticker: str, target_cost: float, obscure_creator_id: bool = True) -> str:
+        """RFQ sized by fee-inclusive target cost. Never rests a remainder, never replaces existing RFQs.
+
+        ``obscure_creator_id`` hides your public ID from makers. Scans keep it hidden; the Shop button sends
+        one round with it shown, to measure whether makers quote anonymous RFQs worse than your app."""
         body = {
             "market_ticker": market_ticker,
             "target_cost_dollars": _dollars(target_cost),
             "rest_remainder": False,
-            "obscure_creator_id": True,
+            "obscure_creator_id": bool(obscure_creator_id),
         }
         assert body["rest_remainder"] is False  # never place resting orders on the book
         res = await self.rest.request("POST", "/communications/rfqs", json=body, auth_required=True, retry="429")

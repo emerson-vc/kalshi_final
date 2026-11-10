@@ -29,7 +29,8 @@ log = logging.getLogger(__name__)
 
 
 async def _rounds(clients: EnvClients, db: Database, run_id: int | None, ticker: str, signature: str, stake: float, rounds: int, gap_s: float,
-                  window: float, purpose: str, hook: ExecutionHook | None = None, candidate: Any = None, ws: Any = None, router: Any = None) -> list[ProbeResult]:
+                  window: float, purpose: str, hook: ExecutionHook | None = None, candidate: Any = None, ws: Any = None, router: Any = None,
+                  show_id_rounds: frozenset[int] = frozenset()) -> list[ProbeResult]:
     own_ws = ws is None
     if own_ws:
         router = QuoteRouter()
@@ -41,7 +42,8 @@ async def _rounds(clients: EnvClients, db: Database, run_id: int | None, ticker:
     try:
         eng = ProbeEngine(clients.api, ws, router, db, run_id=run_id, max_open=1, execution_hook=hook)
         for i in range(rounds):
-            r = await eng.probe(ProbeRequest(ticker, signature, purpose, stake, window, candidate=candidate, allow_execution=hook is not None))
+            r = await eng.probe(ProbeRequest(ticker, signature, purpose, stake, window, candidate=candidate, allow_execution=hook is not None,
+                                             obscure_creator_id=i not in show_id_rounds))
             results.append(r)
             ex = r.execution or {}
             if ex.get("executed") or ex.get("decision") in ("paper_fill", "accept", "abort", "maker_no_confirm"):
@@ -65,8 +67,16 @@ def summarize_rounds(results: list[ProbeResult]) -> dict[str, Any]:
     return {"rounds": len(results), "quoted": len(quoted), "best_price": best, "best_payout": best_r.combo_payout if best_r else None,
             "spread_between_rounds": (max(prices) - min(prices)) if len(prices) > 1 else None,
             "spread_between_makers": (max(makers) - min(makers)) if len(makers) > 1 else None,
-            "per_round": [{"price": r.taker_yes_price, "payout": r.combo_payout, "makers": r.n_makers, "outcome": r.outcome} for r in results],
+            "per_round": [{"price": r.taker_yes_price, "payout": r.combo_payout, "makers": r.n_makers, "outcome": r.outcome,
+                           "id_shown": not r.request.obscure_creator_id} for r in results],
+            "best_payout_anonymous": _best_payout([r for r in quoted if r.request.obscure_creator_id]),
+            "best_payout_your_id": _best_payout([r for r in quoted if not r.request.obscure_creator_id]),
             "ts": timeutil.now()}
+
+
+def _best_payout(results: list[ProbeResult]) -> float | None:
+    pays = [r.combo_payout for r in results if r.combo_payout]
+    return max(pays) if pays else None
 
 
 async def shop_signature(db: Database, env: str, signature: str) -> dict[str, Any]:
@@ -81,7 +91,11 @@ async def shop_signature(db: Database, env: str, signature: str) -> dict[str, An
     try:
         if not clients.authenticated:
             raise RuntimeError(clients.credentials_error or f"no credentials for {env}")
-        res = await _rounds(clients, db, run_id, row["ticker"], signature, st.stake, st.shop_rounds, st.shop_gap_s, st.quote_window_s, "shop")
+        # One round goes out under your ID (the 2nd, so it sits between two anonymous rounds) to test whether
+        # makers quote the scanner's anonymous RFQs worse than your app. Never buys.
+        rounds = max(2, st.shop_rounds)
+        res = await _rounds(clients, db, run_id, row["ticker"], signature, st.stake, rounds, st.shop_gap_s, st.quote_window_s, "shop",
+                            show_id_rounds=frozenset({1}))
         out = {"signature": signature, "ticker": row["ticker"], **summarize_rounds(res)}
         db.update(S.runs, {"id": run_id}, {"status": "done", "finished_at": timeutil.now(), "summary": out})
         return out
